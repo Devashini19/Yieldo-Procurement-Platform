@@ -1,0 +1,6 @@
+node_modules
+.env
+dist
+backend/data/persisted-store.json
+**/persisted-store.json
+*.tmp

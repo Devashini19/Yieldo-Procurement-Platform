@@ -1,0 +1,1157 @@
+import { createContext, useContext, useState, createElement } from "react";
+
+export const translations = {
+  en: {
+    // Topbar
+    nav_book: "Book a Slot",
+    nav_status: "Check Status",
+    nav_tickets: "Raise a Ticket",
+    nav_login: "Farmer Login",
+    nav_admin: "Centre Admin",
+    nav_logout: "Logout",
+
+    // Farmer Profile Panel
+    profile_menu_title: "Farmer Account",
+    profile_member_since: "Member Since",
+    profile_total_transactions: "Total Transactions",
+    profile_total_sold: "Total Sold",
+    profile_total_earned: "Total Earned",
+    profile_active_token: "Active Token",
+    profile_no_active_token: "No Active Token",
+    profile_view_history: "View Full History",
+    profile_raise_ticket: "Raise a Ticket",
+    profile_stats_title: "Procurement Summary",
+    profile_badge_google: "Google Verified",
+    profile_badge_phone: "Mobile Login",
+    profile_quick_link: "Check Live Status →",
+    profile_switch_lang: "Language",
+
+    // FarmerLogin
+    login_hero_title: "Farmer Direct Access",
+    login_hero_sub:
+      "Enter your name and mobile number to book your mandi queue token and track live procurement status in real time.",
+    login_hero_stub_label1: "Farmer Verification",
+    login_hero_stub_value: "Quick Phone Login",
+    login_hero_stub_label2: "Fast · Transparent · Direct Mandi Access",
+    login_card_title: "Farmer Login",
+    login_name_label: "Full name",
+    login_name_placeholder: "e.g. Ramesh Kumar",
+    login_phone_label: "Mobile number",
+    login_phone_placeholder: "e.g. 9876543210",
+    login_btn: "Continue",
+    login_btn_loading: "Verifying...",
+    login_or_divider: "OR",
+    login_google_title: "Sign in with Google",
+    login_google_phone_title: "Complete Mobile Verification",
+    login_google_phone_sub:
+      "Signed in as {email}. Please enter your 10-digit mobile number for mandi token & queue SMS updates.",
+    login_google_verified_badge: "Google Verified Account",
+    login_google_change_account: "← Use a different login method",
+    login_google_btn_continue: "Confirm & Continue",
+    err_name_required: "Please enter your name.",
+    err_phone_invalid: "Enter a valid 10-digit phone number.",
+    err_login_failed: "Failed to log in.",
+    err_google_login_failed: "Google Sign-In failed. Please try again or use mobile login.",
+
+    // Register
+    reg_hero_title: "Know your turn before you leave home.",
+    reg_hero_sub:
+      "Register once, get a live token, and watch your queue position update in real time — no more full-day waits at the procurement centre.",
+    reg_hero_stub_label: "Live estimate example",
+    reg_hero_stub_value: "~24 min",
+    reg_hero_stub_pos: "Position 3 of 11 · Thanjavur Centre",
+    reg_card_title: "Register for a slot",
+    reg_name_label: "Full name",
+    reg_phone_label: "Phone number",
+    reg_crop_label: "Crop",
+    reg_crop_placeholder: "Select a crop",
+    reg_quantity_label: "Quantity (kg)",
+    reg_centre_label: "Procurement centre",
+    reg_centre_placeholder: "Select a centre",
+    reg_slot_date_label: "Preferred Date",
+    reg_slot_time_label: "Preferred Time Slot",
+    reg_slot_time_placeholder: "Select a time slot",
+    slot_crowd_low: "Low Crowd",
+    slot_crowd_medium: "Moderate",
+    slot_crowd_full: "Full",
+    slot_spots_left: "{spots} spots left",
+    slot_full_badge: "🔴 FULL",
+    slot_full_label: "Slot Full",
+    slot_passed_badge: "⏳ PASSED",
+    slot_passed_label: "Slot Passed",
+    slot_full_error: "This slot is full - please choose another time",
+    slot_select_title: "Select Time Slot",
+    slot_capacity_hint: "Live slot capacity & crowd indicator:",
+    slot_loading_availability: "Checking slot availability...",
+    slot_select_centre_prompt: "Select a procurement centre above to check live slot capacity",
+    compare_dates_title: "Compare crowd across the next 7 days",
+    compare_dates_sub: "Pick a date with less crowd to minimize wait times at the centre:",
+    less_crowded_available: "Less crowded dates available:",
+    switch_date_btn: "Switch to {date}",
+    lowest_crowd_badge: "Lowest Crowd",
+    today_label: "Today",
+    tomorrow_label: "Tomorrow",
+    reg_btn: "Get my token",
+    reg_btn_submitting: "Booking...",
+    err_load_centres: "Could not load centres.",
+
+    // Offline Booking & Auto-Sync
+    offline_label: "Offline",
+    offline_pending_short: "pending",
+    offline_syncing_short: "syncing...",
+    offline_badge_title: "You are currently offline. Bookings will be queued locally.",
+    offline_reg_success_title: "Registration Queued Locally (Offline)",
+    offline_reg_success_msg:
+      "You're currently offline — your procurement registration has been saved locally on this device. It will automatically submit to the mandi server as soon as you reconnect.",
+    offline_reg_notice_honest:
+      "Real queue position and estimated wait time will be calculated and assigned once synchronized with the server.",
+    offline_reg_banner:
+      "⚡ You are offline. Your booking will be saved locally and submitted automatically when reconnected.",
+    offline_btn_submit: "Queue Booking (Offline)",
+
+    // Status
+    status_title: "My Tokens & Queue Status",
+    status_loading_tokens: "Loading your booked tokens...",
+    status_empty_title: "You haven't booked a slot yet",
+    status_empty_sub:
+      "Book your mandi queue token in advance to track live status and save wait time.",
+    status_empty_btn: "Book a Slot",
+    status_booked_tokens_header: "Your booked tokens",
+    status_inspect_hint: "click to inspect:",
+    status_token_cancelled_title: "Token cancelled",
+    status_token_cancelled_sub:
+      "This token has been cancelled and removed from the queue.",
+    status_admin_cancelled_title: "Slot Cancelled by Centre Administration",
+    status_admin_cancelled_sub:
+      "Your appointment has been cancelled by the mandi administration with the reason stated below. You can reschedule to a new date and time slot.",
+    status_cancellation_reason_label: "Cancellation Reason",
+    status_slot_date_label: "Booked Date",
+    status_slot_time_label: "Time Slot",
+    status_wait_pos: "You are position",
+    status_wait_of: "of",
+    status_wait_est: "estimated wait",
+    status_wait_min: "min",
+    status_wait_sub:
+      "Updates live based on today's actual centre processing speed and queue movement.",
+    status_cancel_btn: "Cancel my token",
+    status_cancel_btn_loading: "Cancelling...",
+    status_cancel_confirm:
+      "Are you sure you want to cancel your token? This can't be undone.",
+    status_reschedule_btn: "Reschedule (Select Date & Time)",
+    status_reschedule_btn_loading: "Rescheduling...",
+    status_reschedule_cta: "Reschedule Slot Now",
+    status_reschedule_modal_title: "Reschedule Slot",
+    status_reschedule_modal_sub: "Choose a new preferred date and time slot for your procurement appointment.",
+    status_reschedule_select_date: "New Preferred Date",
+    status_reschedule_select_time: "New Time Slot",
+    status_reschedule_confirm_btn: "Confirm Reschedule",
+    status_reschedule_close_btn: "Cancel",
+    status_reschedule_confirm:
+      "This will update your booking to the selected date and time slot. Continue?",
+    status_rescheduled_note: "Rescheduled",
+    status_view_centre_queue: "📺 View live queue for this centre",
+    status_manual_toggle_show: "Look up a different token by ID",
+    status_manual_toggle_hide: "Hide manual token lookup",
+    status_manual_placeholder: "Enter token ID, e.g. TNJ-001",
+    status_manual_btn: "Check",
+
+    // Slot Swap
+    status_swap_btn: "Swap Slot",
+    status_swap_btn_loading: "Swapping...",
+    status_swap_modal_title: "Peer-to-Peer Slot Swap",
+    status_swap_modal_sub: "Select an active farmer slot at your centre to propose a direct swap.",
+    status_swap_partner_label: "Eligible Farmers & Slots",
+    status_swap_no_partners: "No other active slot holders available for swapping at this centre currently.",
+    status_swap_send_btn: "Send Swap Request",
+    status_swap_close_btn: "Cancel",
+    status_incoming_swap_title: "Incoming Slot Swap Requests",
+    status_swap_accept_btn: "Accept Swap",
+    status_swap_decline_btn: "Decline",
+
+    // Admin Cancel Actions
+    admin_col_slot: "Slot Date & Time",
+    admin_cancel_btn: "Cancel (Admin)",
+    admin_cancel_modal_title: "Admin Slot Cancellation",
+    admin_cancel_reason_prompt: "Provide a specific reason for cancelling this slot. An SMS alert will be dispatched to the farmer:",
+    admin_cancel_reason_placeholder: "e.g. Moisture testing lab downtime, centre closed for holiday, temporary power outage",
+    admin_cancel_confirm_btn: "Cancel Slot & Notify Farmer",
+    admin_cancel_dismiss_btn: "Dismiss",
+
+    // Payment Receipt
+    receipt_title: "Payment Receipt",
+    receipt_subtitle: "Government Minimum Support Price (MSP 2025-26) Procurement Voucher",
+    receipt_id_label: "Receipt ID",
+    receipt_token_label: "Token ID",
+    receipt_farmer_label: "Farmer Name",
+    receipt_centre_label: "Procurement Centre",
+    receipt_date_label: "Date",
+    receipt_crop_label: "Crop",
+    receipt_variety_label: "Variety & Grade",
+    receipt_quantity_label: "Quantity",
+    receipt_declared_qty_label: "Declared at Booking",
+    receipt_verified_qty_label: "Verified at Centre",
+    receipt_discrepancy_reason_label: "Verification Note / Reason",
+    receipt_rate_label: "Rate per kg",
+    receipt_rate_quintal_label: "Rate per Quintal",
+    receipt_total_label: "Total Amount",
+    receipt_final_payment_note: "Final payment calculated strictly on verified produce weight",
+    receipt_status_paid: "Payment Credited",
+    receipt_status_pending_release: "Receipt Being Prepared",
+    receipt_being_prepared_title: "Receipt being prepared by the centre",
+    receipt_being_prepared_sub: "Your payment has been processed. The official receipt is being reviewed and will be released by the centre shortly.",
+    receipt_released_badge: "Receipt Released",
+    admin_review_release_btn: "Review & Release Receipt",
+    admin_release_receipt_btn: "Release Receipt to Farmer",
+    admin_review_receipt_modal_title: "Review & Release Payment Receipt",
+    admin_review_receipt_modal_sub: "Review verified produce quantities, MSP rates, and total amount before releasing the official voucher to the farmer.",
+    admin_receipt_released_success: "Receipt released to {name}",
+    receipt_download_btn: "Download Receipt",
+    receipt_gov_verified: "Official 2025-26 MSP Rate · Direct Benefit Transfer (DBT)",
+
+    // Produce Verification & Discrepancy Modal
+    admin_verify_modal_title: "Produce Weighment & Quality Verification",
+    admin_verify_modal_sub: "Confirm actual physical weighment and variety at the centre before approving procurement. Payment calculation will be strictly derived from this verified quantity.",
+    admin_verify_declared_qty: "Farmer Declared Quantity",
+    admin_verify_verified_qty_label: "Actual Verified Quantity at Centre",
+    admin_verify_unit_label: "Unit of Measurement",
+    admin_verify_paddy_variety_label: "Paddy Variety Confirmation",
+    admin_verify_variety_common: "Common (₹2,369 / Quintal)",
+    admin_verify_variety_fine: "Grade A / Fine (₹2,400 / Quintal)",
+    admin_verify_calc_preview: "Computed Produce Weight",
+    admin_verify_discrepancy_label: "Discrepancy vs Declared",
+    admin_verify_discrepancy_warning: "⚠️ Discrepancy exceeds 15% threshold ({percent}% difference). A justification note is mandatory before proceeding.",
+    admin_verify_reason_label: "Discrepancy Justification Reason",
+    admin_verify_reason_required_badge: "Required (>15% Discrepancy)",
+    admin_verify_reason_placeholder: "e.g. Moisture deduction, foreign matter removal, under-delivery, bag tare adjustment",
+    admin_verify_reason_preset_moisture: "Moisture content rejection",
+    admin_verify_reason_preset_foreign: "Foreign matter / dust deduction",
+    admin_verify_reason_preset_under: "Under-delivery by farmer",
+    admin_verify_reason_preset_damaged: "Damaged produce deduction",
+    admin_verify_reason_preset_tare: "Bag tare adjustment",
+    admin_verify_confirm_btn: "Confirm Verification & Mark Procured",
+    admin_verify_cancel_btn: "Cancel",
+
+    // Permanent Procurement History
+    tab_active_tokens: "Active Tokens & Status",
+    tab_procurement_history: "Procurement History",
+    history_title: "Permanent Procurement History",
+    history_subtitle: "Point-in-time official records & payment receipts",
+    history_empty: "No past completed procurement records found.",
+    history_rate: "MSP Rate",
+    history_state_incentive: "State Incentive",
+    history_total_paid: "Total Paid",
+    history_token: "Token ID",
+    history_date: "Payment Date",
+    history_crop: "Crop & Variety",
+    history_qty: "Procured Quantity",
+    history_view_receipt: "View Receipt",
+    history_receipt_modal_title: "Permanent Procurement Snapshot Receipt",
+    admin_tab_records: "📜 Procurement Records",
+    admin_records_title: "Centre Procurement Records & Point-in-Time Snapshots",
+    admin_records_sub: "Permanent audit-trail of completed procurements across all centres",
+
+    // Quantity units
+    unit_bags: "Bags",
+    unit_tons: "Tons",
+    unit_quintals: "Quintals",
+    unit_kg: "kg",
+
+    // In-App Live Notifications
+    notify_live_alert_title: "Live Queue Update",
+    notify_pos_advance_msg: "You are now position {pos} in the queue — estimated wait ~{wait} min. You can start heading to the centre.",
+    notify_pos_3_msg: "You're 3rd in line — consider heading to the centre now.",
+    notify_pos_1_msg: "You're next! Please arrive at the centre now.",
+    notify_status_quality_check_msg: "Your produce is now being checked.",
+    notify_status_procured_msg: "Your produce has been procured.",
+    notify_status_payment_initiated_msg: "Payment has been initiated for your procurement.",
+    notify_status_paid_msg: "Payment credited! Thank you for using Yieldo.",
+    notify_status_admin_cancelled_msg: "Your slot for {date} at {time} was cancelled by admin: \"{reason}\". Tap to reschedule.",
+    notify_status_cancelled_msg: "Your token has been cancelled and removed from the queue.",
+    notify_voice_on: "Voice alert: ON",
+    notify_voice_off: "Voice alert: OFF",
+
+    // Persistent Notification Center
+    notif_panel_title: "Notifications",
+    notif_mark_all_read: "Mark all as read",
+    notif_empty: "No notifications yet",
+    notif_empty_sub: "Live updates regarding your queue position and token status will appear here.",
+    notif_just_now: "Just now",
+    notif_min_ago: "min ago",
+    notif_mark_read_btn: "Mark as read",
+
+    // Geofenced Check-In
+    checkin_badge_checked_in: "✅ Checked in automatically (Arrived at centre)",
+    checkin_badge_manual_checked_in: "✅ Checked in (Arrived at centre)",
+    checkin_badge_not_near: "📍 Not yet near centre (Auto check-in within 500m)",
+    checkin_badge_distance: "📍 ~{distance} from centre",
+    checkin_manual_btn: "📍 Check in now",
+    checkin_manual_loading: "Checking in...",
+    checkin_loc_denied: "Enable location for auto check-in, or check in manually.",
+    checkin_success_notify: "You have arrived near {centre}! You've been automatically checked in.",
+    admin_checked_in_badge: "✅ Arrived",
+    admin_en_route_badge: "🚗 En route",
+
+    // Suggested Centres
+    suggested_centres_title: "Suggested centres for you",
+    suggested_centres_sub: "Nearby centres with lower wait times and low crowd levels accepting your crop.",
+    suggested_click_to_select: "Click to select",
+    distance_away: "away",
+
+    // Centre Queue Public Board
+    centre_queue_title: "Live Centre Queue",
+    centre_queue_subtitle: "Real-time digital token display board for direct purchase centres",
+    centre_queue_now_serving: "Now Serving",
+    centre_queue_up_next: "Up Next",
+    centre_queue_no_active: "No token currently in quality check / processing",
+    centre_queue_empty_queue: "No farmers currently waiting in this centre's queue.",
+    centre_queue_anonymized_note: "Public Display Board · Anonymized Token Feed",
+    centre_queue_live_badge: "LIVE UPDATES",
+    centre_queue_back_status: "← Back to My Status",
+    centre_queue_switch_centre: "Switch Centre:",
+    centre_queue_total_in_queue: "total in queue",
+    centre_queue_waiting: "waiting",
+
+    // Stages
+    stage_in_queue: "In Queue",
+    stage_quality_check: "Quality Check",
+    stage_procured: "Procured",
+    stage_payment_initiated: "Payment Initiated",
+    stage_paid: "Paid",
+    stage_cancelled: "Cancelled",
+
+    // Crowd & Best Time & Alerts
+    crowd_low: "Low crowd",
+    crowd_medium: "Medium crowd",
+    crowd_high: "High crowd",
+    best_time_label: "Best time to visit",
+    best_time_no_data: "Not enough historical data yet",
+    delay_alert_sent: "Delay alert broadcasted to active queue farmers",
+    delay_alert_prompt: "Enter delay alert message for farmers in queue at",
+    delay_alert_btn: "Send Delay Alert",
+
+    // Chatbot & Voice Assistant
+    chat_widget_title: "Yieldo AI Assistant",
+    chat_widget_subtitle: "Ask in English or தமிழ்",
+    chat_input_placeholder: "Ask about slots, crops, tokens...",
+    chat_send_btn: "Send",
+    chat_welcome_msg:
+      "Hello! I am your Yieldo assistant. Ask me about booking slots, queue status, or procurement centres.",
+    chat_open_btn: "Ask Assistant",
+    voice_listening: "Listening... speak now",
+    voice_speaking: "Speaking reply...",
+    voice_toggle_on: "Voice reply: ON",
+    voice_toggle_off: "Voice reply: OFF",
+    voice_not_supported:
+      "Voice input not supported in this browser, please use Chrome",
+    voice_err_permission:
+      "Microphone access denied. Please allow mic permission.",
+    voice_err_no_speech: "No speech detected. Please try speaking again.",
+    voice_err_general: "Could not recognize speech. Please try again.",
+
+    // FAQs
+    faq_section_title: "Common Questions",
+    faqs: [
+      {
+        q: "How do I check my queue position?",
+        a: "Go to the 'Check Status' page. Since you are logged in, your booked tokens are automatically listed. Click any token to view your real-time queue position and estimated wait time.",
+      },
+      {
+        q: "How is my wait time calculated?",
+        a: "Your estimated wait is calculated dynamically: Queue Position × Centre's Average Processing Time. It updates in real time as preceding tokens are processed.",
+      },
+      {
+        q: "Can I cancel my token?",
+        a: "Yes. If your token is still 'In Queue' or in 'Quality Check', open its status on the 'Check Status' page and click 'Cancel my token'.",
+      },
+      {
+        q: "What happens after quality check?",
+        a: "Once moisture and quality checks pass, your produce status moves to 'Procured'. The mandi officer will record net weight and initiate the direct payment stage.",
+      },
+      {
+        q: "When will I get paid?",
+        a: "After procurement confirmation, payment is initiated directly to your registered account. The status will transition from 'Payment Initiated' to 'Paid'.",
+      },
+      {
+        q: "Which centres accept my crop?",
+        a: "Centres in Thanjavur, Villupuram, and Cuddalore accept Paddy, Wheat, Pulses, Maize, Groundnut, and Cotton. You can choose your preferred centre on the 'Book a Slot' page.",
+      },
+    ],
+
+    // Support Tickets
+    ticket_hero_title: "Farmer Support & Grievance Helpdesk",
+    ticket_hero_sub:
+      "Need help with slot booking, delayed payments, centre operations, or app issues? Raise a ticket and track its resolution in real time.",
+    ticket_hero_stub_label: "Average Resolution Time",
+    ticket_hero_stub_value: "< 24 hrs",
+    ticket_hero_stub_sub: "Dedicated Mandi Helpdesk · Quick Grievance Redressal",
+    ticket_tab_raise: "Raise a Ticket",
+    ticket_tab_my: "My Tickets",
+    ticket_card_title: "Submit a Support Ticket",
+    ticket_type_label: "Ticket Type",
+    ticket_type_placeholder: "Select a ticket type",
+    ticket_subtype_label: "Ticket Subtype",
+    ticket_subtype_placeholder: "Select a subtype",
+    ticket_desc_label: "Description",
+    ticket_desc_placeholder: "Explain your issue or request in detail (min. 5 characters)...",
+    ticket_state_label: "State",
+    ticket_district_label: "District",
+    ticket_district_placeholder: "Select district",
+    ticket_village_label: "Village / Town",
+    ticket_village_placeholder: "e.g. Thiruvaiyaru",
+    ticket_pincode_label: "Pincode (6 digits)",
+    ticket_pincode_placeholder: "e.g. 613001",
+    ticket_farmer_name_label: "Farmer Name",
+    ticket_farmer_phone_label: "Mobile Number",
+    ticket_submit_btn: "Submit Ticket",
+    ticket_submit_loading: "Submitting ticket...",
+    ticket_success_title: "Ticket Raised Successfully!",
+    ticket_success_msg:
+      "Your support ticket has been registered. Our mandi support officer will review and update you shortly.",
+    ticket_success_token_badge: "Your Ticket ID",
+    ticket_raise_another_btn: "Raise Another Ticket",
+    ticket_view_my_btn: "View My Tickets",
+    ticket_my_title: "My Submitted Tickets",
+    ticket_my_sub: "Track real-time status and resolution updates for your support tickets.",
+    ticket_my_empty_title: "No Support Tickets Found",
+    ticket_my_empty_sub:
+      "You haven't submitted any tickets yet. If you encounter any issue, click 'Raise a Ticket'.",
+    ticket_empty_btn: "Raise a Ticket",
+    ticket_id_label: "Ticket ID",
+    ticket_created_label: "Submitted On",
+    ticket_category_label: "Category",
+    ticket_location_label: "Location",
+    ticket_desc_view_label: "Description",
+    ticket_status_label: "Status",
+    ticket_status_open: "Open",
+    ticket_status_in_progress: "In Progress",
+    ticket_status_resolved: "Resolved",
+    ticket_status_closed: "Closed",
+    admin_tickets_title: "Support & Grievance Tickets",
+    admin_tickets_sub: "Review and resolve farmer support requests across all districts",
+    admin_tickets_filter_all: "All Tickets",
+    admin_tickets_empty: "No support tickets found matching this filter.",
+    admin_ticket_update_status: "Update Status",
+    admin_ticket_action_inprogress: "Mark In Progress",
+    admin_ticket_action_resolve: "Mark Resolved",
+    admin_ticket_action_close: "Mark Closed",
+    admin_ticket_action_reopen: "Reopen Ticket",
+    err_ticket_type_req: "Please select a ticket type.",
+    err_ticket_subtype_req: "Please select a ticket subtype.",
+    err_ticket_desc_req: "Please enter a description (at least 5 characters).",
+    err_ticket_district_req: "Please select a district.",
+    err_ticket_village_req: "Please enter your village or town name.",
+    err_ticket_pincode_invalid: "Please enter a valid 6-digit pincode.",
+    err_ticket_phone_invalid: "Please enter a valid 10-digit mobile number.",
+    err_load_tickets: "Could not load support tickets.",
+  },
+  ta: {
+    // Topbar
+    nav_book: "நேர முன்பதிவு",
+    nav_status: "நிலை அறிதல்",
+    nav_tickets: "புகார் / உதவி",
+    nav_login: "விவசாயி உள்நுழைவு",
+    nav_admin: "மைய நிர்வாகம்",
+    nav_logout: "வெளியேறு",
+
+    // Farmer Profile Panel
+    profile_menu_title: "விவசாயி கணக்கு",
+    profile_member_since: "உறுப்பினர் சேர்ந்த நாள்",
+    profile_total_transactions: "மொத்த கொள்முதல்கள்",
+    profile_total_sold: "மொத்த விற்பனை",
+    profile_total_earned: "ஈட்டிய வருவாய்",
+    profile_active_token: "செயலில் உள்ள டோக்கன்",
+    profile_no_active_token: "செயலில் டோக்கன் இல்லை",
+    profile_view_history: "முழு கொள்முதல் வரலாறு",
+    profile_raise_ticket: "புகார் / உதவி கோரிக்கை",
+    profile_stats_title: "கொள்முதல் சுருக்கம்",
+    profile_badge_google: "Google கணக்கு",
+    profile_badge_phone: "கைபேசி உள்நுழைவு",
+    profile_quick_link: "நேரலை நிலை அறிதல் →",
+    profile_switch_lang: "மொழி",
+
+    // FarmerLogin
+    login_hero_title: "விவசாயிகள் நேரடி அணுகல்",
+    login_hero_sub:
+      "நேரடி நெல்/தானிய கொள்முதல் வரிசை டோக்கன் முன்பதிவு செய்யவும், நேரலை கொள்முதல் நிலையை அறியவும் உங்கள் பெயர் மற்றும் கைபேசி எண்ணை உள்ளிடவும்.",
+    login_hero_stub_label1: "விவசாயி சரிபார்ப்பு",
+    login_hero_stub_value: "விரைவு கைபேசி உள்நுழைவு",
+    login_hero_stub_label2: "விரைவான · வெளிப்படையான நேரடி கொள்முதல்",
+    login_card_title: "விவசாயி உள்நுழைவு",
+    login_name_label: "முழு பெயர்",
+    login_name_placeholder: "எ.கா. ரமேஷ் குமார்",
+    login_phone_label: "கைபேசி எண்",
+    login_phone_placeholder: "எ.கா. 9876543210",
+    login_btn: "தொடர்க",
+    login_btn_loading: "சரிபார்க்கிறது...",
+    login_or_divider: "அல்லது",
+    login_google_title: "Google மூலம் உள்நுழைக",
+    login_google_phone_title: "கைபேசி எண் சரிபார்ப்பு",
+    login_google_phone_sub:
+      "Google கணக்கு ({email}) மூலம் உள்நுழைந்துள்ளீர்கள். டோக்கன் மற்றும் நேரலை SMS அறிவிப்புகளுக்கு உங்கள் 10 இலக்க கைபேசி எண்ணை உள்ளிடவும்.",
+    login_google_verified_badge: "Google சரிபார்க்கப்பட்ட கணக்கு",
+    login_google_change_account: "← பிற உள்நுழைவு வழிகளுக்கு திரும்புக",
+    login_google_btn_continue: "உறுதிசெய்து தொடர்க",
+    err_name_required: "தயவுசெய்து உங்கள் பெயரை உள்ளிடவும்.",
+    err_phone_invalid: "சரியான 10 இலக்க கைபேசி எண்ணை உள்ளிடவும்.",
+    err_login_failed: "உள்நுழைவு தோல்வியடைந்தது.",
+    err_google_login_failed: "Google உள்நுழைவு தோல்வியடைந்தது. மீண்டும் முயற்சிக்கவும் அல்லது கைபேசி மூலம் உள்நுழையவும்.",
+
+    // Register
+    reg_hero_title: "வீட்டிலிருந்தே உங்கள் கொள்முதல் முறை அறியலாம்.",
+    reg_hero_sub:
+      "ஒருமுறை பதிவு செய்து நேரலை டோக்கனைப் பெறுங்கள். கொள்முதல் மையத்தில் நாள் முழுவதும் காத்திருக்க வேண்டிய அவசியமில்லை.",
+    reg_hero_stub_label: "நேரலை மதிப்பீடு",
+    reg_hero_stub_value: "~24 நிமிடம்",
+    reg_hero_stub_pos: "வரிசை நிலை 3/11 · தஞ்சாவூர் மையம்",
+    reg_card_title: "டோக்கன் முன்பதிவு செய்க",
+    reg_name_label: "முழு பெயர்",
+    reg_phone_label: "கைபேசி எண்",
+    reg_crop_label: "பயிர் வகை",
+    reg_crop_placeholder: "பயிரைத் தேர்ந்தெடுக்கவும்",
+    reg_quantity_label: "அளவு (கிலோ)",
+    reg_centre_label: "கொள்முதல் மையம்",
+    reg_centre_placeholder: "மையத்தைத் தேர்ந்தெடுக்கவும்",
+    reg_slot_date_label: "விருப்பமான தேதி",
+    reg_slot_time_label: "விருப்பமான நேர இடைவெளி",
+    reg_slot_time_placeholder: "நேரத்தைத் தேர்ந்தெடுக்கவும்",
+    slot_crowd_low: "குறைந்த கூட்டம்",
+    slot_crowd_medium: "மிதமான கூட்டம்",
+    slot_crowd_full: "நிரம்பியது (Full)",
+    slot_spots_left: "{spots} இடங்கள் உள்ளன",
+    slot_full_badge: "🔴 நிரம்பியது",
+    slot_full_label: "முழுமை",
+    slot_passed_badge: "⏳ முடிந்தது",
+    slot_passed_label: "முடிந்தது",
+    slot_full_error: "இந்த நேரம் நிரம்பியுள்ளது - தயவுசெய்து வேறு நேரத்தைத் தேர்ந்தெடுக்கவும்",
+    slot_select_title: "நேர இடைவெளியைத் தேர்ந்தெடுக்கவும்",
+    slot_capacity_hint: "நேர இடைவெளி கொள்ளளவு மற்றும் கூட்ட நெரிசல் நிலை:",
+    slot_loading_availability: "நேர இடைவெளிகள் சரிபார்க்கப்படுகின்றன...",
+    slot_select_centre_prompt: "நேரலை இடங்களை அறிய மேலே உள்ள கொள்முதல் மையத்தைத் தேர்ந்தெடுக்கவும்",
+    compare_dates_title: "அடுத்த 7 நாட்களின் கூட்ட நெரிசலை ஒப்பிடுங்கள்",
+    compare_dates_sub: "காத்திருப்பு நேரத்தைக் குறைக்க குறைந்த கூட்டம் உள்ள தேதியைத் தேர்வுசெய்யவும்:",
+    less_crowded_available: "குறைந்த நெரிசல் உள்ள மாற்றுத் தேதிகள் உள்ளன:",
+    switch_date_btn: "{date} தேதிக்கு மாற்றுக",
+    lowest_crowd_badge: "மிகக் குறைந்த கூட்டம்",
+    today_label: "இன்று",
+    tomorrow_label: "நாளை",
+    reg_btn: "டோக்கன் பெறுக",
+    reg_btn_submitting: "முன்பதிவாகிறது...",
+    err_load_centres: "மையங்களை ஏற்றுவதில் பிழை.",
+
+    // Offline Booking & Auto-Sync
+    offline_label: "ஆஃப்லைன்",
+    offline_pending_short: "நிலுவை",
+    offline_syncing_short: "இணைக்கப்படுகிறது...",
+    offline_badge_title: "இணைய இணைப்பு இல்லை. தகவல்கள் சாதனத்தில் சேமிக்கப்பட்டு பின்னர் அனுப்பப்படும்.",
+    offline_reg_success_title: "முன்பதிவு சேமிக்கப்பட்டது (ஆஃப்லைன்)",
+    offline_reg_success_msg:
+      "தற்போது இணைய இணைப்பு இல்லை — உங்கள் கொள்முதல் பதிவு சாதனத்தில் பாதுகாப்பாக சேமிக்கப்பட்டுள்ளது. இணைய இணைப்பு கிடைத்தவுடன் தானாகவே சர்வரில் பதிவாகி டோக்கன் எண் ஒதுக்கப்படும்.",
+    offline_reg_notice_honest:
+      "நேரலை வரிசை எண் மற்றும் காத்திருப்பு நேரம் இணைய இணைப்பு கிடைத்தவுடன் சர்வரிலிருந்து கணக்கிடப்பட்டு ஒதுக்கப்படும்.",
+    offline_reg_banner:
+      "⚡ இணைய இணைப்பு இல்லை. உங்கள் முன்பதிவு சேமிக்கப்பட்டு இணைப்பு வந்தவுடன் தானாக பதிவாகும்.",
+    offline_btn_submit: "முன்பதிவை சேமி (ஆஃப்லைன்)",
+
+    // Status
+    status_title: "எனது டோக்கன்கள் & வரிசை நிலை",
+    status_loading_tokens: "முன்பதிவு செய்த டோக்கன்கள் ஏற்றப்படுகின்றன...",
+    status_empty_title: "நீங்கள் இன்னும் டோக்கன் முன்பதிவு செய்யவில்லை",
+    status_empty_sub:
+      "நேரத்தை மிச்சப்படுத்தவும் நேரலை நிலையை அறியவும் டோக்கனை முன்கூட்டியே பதிவு செய்யுங்கள்.",
+    status_empty_btn: "டோக்கன் முன்பதிவு",
+    status_booked_tokens_header: "உங்கள் டோக்கன்கள்",
+    status_inspect_hint: "விவரங்களை அறிய கிளிக் செய்யவும்:",
+    status_token_cancelled_title: "டோக்கன் ரத்து செய்யப்பட்டது",
+    status_token_cancelled_sub:
+      "இந்த டோக்கன் ரத்து செய்யப்பட்டு வரிசையிலிருந்து நீக்கப்பட்டது.",
+    status_admin_cancelled_title: "மைய நிர்வாகியால் முன்பதிவு ரத்து செய்யப்பட்டது",
+    status_admin_cancelled_sub:
+      "உங்கள் டோக்கன் கொள்முதல் மைய நிர்வாகத்தால் கீழே உள்ள காரணத்திற்காக ரத்து செய்யப்பட்டுள்ளது. நீங்கள் புதிய தேதி மற்றும் நேரத்தை தேர்வு செய்யலாம்.",
+    status_cancellation_reason_label: "ரத்து செய்யப்பட்டதற்கான காரணம்",
+    status_slot_date_label: "முன்பதிவு தேதி",
+    status_slot_time_label: "நேர இடைவெளி",
+    status_wait_pos: "உங்கள் வரிசை எண்",
+    status_wait_of: "மொத்தம்",
+    status_wait_est: "மதிப்பிடப்பட்ட நேரம்",
+    status_wait_min: "நிமிடங்கள்",
+    status_wait_sub:
+      "இன்றைய கொள்முதல் மையத்தின் நேரலை செயலாக்க வேகம் மற்றும் வரிசை இயக்கத்தின் அடிப்படையில் கணக்கிடப்படுகிறது.",
+    status_cancel_btn: "டோக்கனை ரத்து செய்",
+    status_cancel_btn_loading: "ரத்தாகிறது...",
+    status_cancel_confirm:
+      "உங்கள் டோக்கனை ரத்து செய்ய விரும்புகிறீர்களா? இதை மீண்டும் மாற்ற முடியாது.",
+    status_reschedule_btn: "நேரத்தை மாற்று (தேதி & நேரம்)",
+    status_reschedule_btn_loading: "நேரம் மாற்றப்படுகிறது...",
+    status_reschedule_cta: "புதிய நேரத்திற்கு மாற்றவும்",
+    status_reschedule_modal_title: "முன்பதிவு நேரத்தை மாற்றுதல்",
+    status_reschedule_modal_sub: "உங்கள் வருகைக்கான புதிய தேதி மற்றும் நேர இடைவெளியைத் தேர்ந்தெடுக்கவும்.",
+    status_reschedule_select_date: "புதிய தேதி",
+    status_reschedule_select_time: "புதிய நேர இடைவெளி",
+    status_reschedule_confirm_btn: "மாற்றத்தை உறுதிசெய்",
+    status_reschedule_close_btn: "ரத்து",
+    status_reschedule_confirm:
+      "இது உங்கள் முன்பதிவை தேர்ந்தெடுக்கப்பட்ட புதிய தேதி மற்றும் நேரத்திற்கு மாற்றும். தொடரவா?",
+    status_rescheduled_note: "தள்ளிவைக்கப்பட்டது",
+    status_view_centre_queue: "📺 இந்த மையத்தின் நேரலை வரிசையைக் காண்க",
+    status_manual_toggle_show: "மற்றொரு டோக்கன் எண் மூலம் பார்க்க",
+    status_manual_toggle_hide: "டோக்கன் உள்ளீட்டை மறை",
+    status_manual_placeholder: "டோக்கன் எண் (எ.கா. TNJ-001)",
+    status_manual_btn: "சரிபார்",
+
+    // Slot Swap
+    status_swap_btn: "நேரத்தை மாற்றிக்கொள்ளுங்கள் (Swap)",
+    status_swap_btn_loading: "மாற்றப்படுகிறது...",
+    status_swap_modal_title: "விவசாயிகளுடன் நேரப் பரிமாற்றம் (Slot Swap)",
+    status_swap_modal_sub: "உங்கள் மையத்தில் உள்ள மற்றொரு விவசாயியுடன் நேரத்தை மாற்றிக் கொள்ள கோரிக்கை அனுப்பவும்.",
+    status_swap_partner_label: "கிடைக்கும் விவசாயிகள் மற்றும் நேரம்",
+    status_swap_no_partners: "தற்போது இந்த மையத்தில் மாற்றிக்கொள்ள வேறு விவசாயிகள் இல்லை.",
+    status_swap_send_btn: "பரிமாற்ற கோரிக்கை அனுப்புக",
+    status_swap_close_btn: "ரத்து செய்",
+    status_incoming_swap_title: "வந்திருக்கும் நேரப் பரிமாற்ற கோரிக்கைகள்",
+    status_swap_accept_btn: "ஏற்றுக்கொள்",
+    status_swap_decline_btn: "மறு",
+
+    // Admin Cancel Actions
+    admin_col_slot: "தேதி & நேரம்",
+    admin_cancel_btn: "ரத்து செய் (நிர்வாகம்)",
+    admin_cancel_modal_title: "முன்பதிவை ரத்து செய்தல் (நிர்வாகம்)",
+    admin_cancel_reason_prompt: "ரத்து செய்வதற்கான காரணத்தை உள்ளிடவும் (விவசாயிக்கு குறுஞ்செய்தி அனுப்பப்படும்):",
+    admin_cancel_reason_placeholder: "எ.கா. ஈரப்பதம் பரிசோதனை உபகரண பராமரிப்பு, அவசர விடுமுறை",
+    admin_cancel_confirm_btn: "ரத்து செய்து விவசாயிக்கு அறிவி",
+    admin_cancel_dismiss_btn: "விலகு",
+
+    // Payment Receipt
+    receipt_title: "பணம் செலுத்திய ரசீது",
+    receipt_subtitle: "அரசு ஆதார விலை (MSP 2025-26) நேரடி கொள்முதல் ரசீது",
+    receipt_id_label: "ரசீது எண்",
+    receipt_token_label: "டோக்கன் எண்",
+    receipt_farmer_label: "விவசாயி பெயர்",
+    receipt_centre_label: "கொள்முதல் மையம்",
+    receipt_date_label: "தேதி",
+    receipt_crop_label: "பயிர்",
+    receipt_variety_label: "வகை & தரம்",
+    receipt_quantity_label: "அளவு",
+    receipt_declared_qty_label: "முன்பதிவில் அறிவித்தது",
+    receipt_verified_qty_label: "மையத்தில் சரிபார்க்கப்பட்ட எடை",
+    receipt_discrepancy_reason_label: "சரிபார்ப்பு குறிப்பு / காரணம்",
+    receipt_rate_label: "கிலோ விலை",
+    receipt_rate_quintal_label: "குவிண்டால் விலை",
+    receipt_total_label: "மொத்த தொகை",
+    receipt_final_payment_note: "சரிபார்க்கப்பட்ட எடையின் அடிப்படையில் மட்டுமே இறுதி கட்டணம் கணக்கிடப்படுகிறது",
+    receipt_status_paid: "பணம் செலுத்தப்பட்டது",
+    receipt_status_pending_release: "ரசீது தயாரிக்கப்படுகிறது",
+    receipt_being_prepared_title: "மையத்தால் ரசீது தயாரிக்கப்பட்டு வருகிறது",
+    receipt_being_prepared_sub: "உங்கள் கட்டணம் உறுதி செய்யப்பட்டது. அதிகாரப்பூர்வ ரசீது மைய நிர்வாகத்தால் மதிப்பாய்வு செய்யப்பட்டு விரைவில் வெளியிடப்படும்.",
+    receipt_released_badge: "ரசீது வெளியிடப்பட்டது",
+    admin_review_release_btn: "ரசீதை மதிப்பாய்வு செய்து வெளியிடு",
+    admin_release_receipt_btn: "விவசாயிக்கு ரசீதை வெளியிடு",
+    admin_review_receipt_modal_title: "கட்டண ரசீதை மதிப்பாய்வு செய்து வெளியிடுதல்",
+    admin_review_receipt_modal_sub: "விவசாயிக்கு அதிகாரப்பூர்வ ரசீதை வெளியிடுவதற்கு முன் சரிபார்க்கப்பட்ட எடை, குறைந்தபட்ச ஆதார விலை மற்றும் மொத்த தொகையை மதிப்பாய்வு செய்யவும்.",
+    admin_receipt_released_success: "{name} விவசாயிக்கு ரசீது வெற்றிகரமாக வெளியிடப்பட்டது",
+    receipt_download_btn: "ரசீதை பதிவிறக்குக",
+    receipt_gov_verified: "அரசு அங்கீகரிக்கப்பட்ட 2025-26 MSP ஆதார விலை · நேரடி வங்கி பரிவர்த்தனை (DBT)",
+
+    // Produce Verification & Discrepancy Modal
+    admin_verify_modal_title: "பயிர் எடை & தர சரிபார்ப்பு (நிர்வாகம்)",
+    admin_verify_modal_sub: "கொள்முதலை உறுதி செய்வதற்கு முன் மையத்தில் உள்ள உண்மையான எடை மற்றும் பயிர் வகையை உறுதிப்படுத்தவும். இறுதி கட்டணம் இந்த சரிபார்க்கப்பட்ட அளவின் அடிப்படையில் மட்டுமே கணக்கிடப்படும்.",
+    admin_verify_declared_qty: "விவசாயி முன்பதிவு செய்த அளவு",
+    admin_verify_verified_qty_label: "மையத்தில் சரிபார்க்கப்பட்ட உண்மையான அளவு",
+    admin_verify_unit_label: "அளவீட்டு அலகு",
+    admin_verify_paddy_variety_label: "நெல் வகை உறுதிப்படுத்தல்",
+    admin_verify_variety_common: "சாதாரண நெல் (₹2,369 / குவிண்டால்)",
+    admin_verify_variety_fine: "சன்ன ரகம் / Fine (₹2,400 / குவிண்டால்)",
+    admin_verify_calc_preview: "கணக்கிடப்பட்ட மொத்த எடை",
+    admin_verify_discrepancy_label: "அளவு வித்தியாசம்",
+    admin_verify_discrepancy_warning: "⚠️ அளவு வித்தியாசம் 15% வரம்பைத் தாண்டியுள்ளது ({percent}% வித்தியாசம்). காரணத்தை உள்ளிடுவது கட்டாயமாகும்.",
+    admin_verify_reason_label: "வித்தியாசத்திற்கான காரணம்",
+    admin_verify_reason_required_badge: "கட்டாயம் (>15% வித்தியாசம்)",
+    admin_verify_reason_placeholder: "எ.கா. ஈரப்பதம் கழிவு, தூசு/பதர்ப்பு நீக்கம், குறைந்த வரத்து, சாக்கு எடை சரிசெய்தல்",
+    admin_verify_reason_preset_moisture: "ஈரப்பதம் நிராகரிப்பு",
+    admin_verify_reason_preset_foreign: "தூசி / பதர்ப்பு கழிவு",
+    admin_verify_reason_preset_under: "விவசாயி குறைவான அளவு கொண்டுவந்தது",
+    admin_verify_reason_preset_damaged: "சேதமடைந்த பயிர் கழிவு",
+    admin_verify_reason_preset_tare: "சாக்கு எடை சரிசெய்தல்",
+    admin_verify_confirm_btn: "சரிபார்ப்பை உறுதிசெய்து கொள்முதல் செய்க",
+    admin_verify_cancel_btn: "ரத்து",
+
+    // Permanent Procurement History
+    tab_active_tokens: "செயலில் உள்ள டோக்கன்கள்",
+    tab_procurement_history: "கொள்முதல் வரலாறு",
+    history_title: "நிரந்தர கொள்முதல் வரலாறு",
+    history_subtitle: "அதிகாரப்பூர்வ கொள்முதல் மற்றும் பணப்பரிவர்த்தனை பதிவுகள்",
+    history_empty: "முடிக்கப்பட்ட கொள்முதல் பதிவுகள் எதுவும் இல்லை.",
+    history_rate: "குறைந்தபட்ச ஆதரவு விலை (MSP)",
+    history_state_incentive: "மாநில ஊக்கத்தொகை",
+    history_total_paid: "மொத்த தொகை",
+    history_token: "டோக்கன் எண்",
+    history_date: "செலுத்தப்பட்ட தேதி",
+    history_crop: "பயிர் & ரகம்",
+    history_qty: "கொள்முதல் செய்யப்பட்ட அளவு",
+    history_view_receipt: "ரசீதை பார்க்க",
+    history_receipt_modal_title: "நிரந்தர கொள்முதல் ஸ்னாப்ஷாட் ரசீது",
+    admin_tab_records: "📜 கொள்முதல் பதிவுகள்",
+    admin_records_title: "மத்திய கொள்முதல் பதிவுகள் & நிலைத்தன்மை ஸ்னாப்ஷாட்கள்",
+    admin_records_sub: "அனைத்து மையங்களிலும் முடிக்கப்பட்ட கொள்முதல்களின் நிரந்தர தணிக்கைப் பதிவு",
+
+    // In-App Live Notifications
+    notify_live_alert_title: "நேரலை வரிசை அறிவிப்பு",
+    notify_pos_advance_msg: "நீங்கள் இப்போது வரிசையில் {pos} வது இடத்தில் உள்ளீர்கள் — மதிப்பிடப்பட்ட நேரம் ~{wait} நிமிடம். கொள்முதல் மையத்திற்கு புறப்படலாம்.",
+    notify_pos_3_msg: "நீங்கள் வரிசையில் 3வது இடத்தில் உள்ளீர்கள் — கொள்முதல் நிலையத்திற்கு புறப்படவும்.",
+    notify_pos_1_msg: "அடுத்த முறை உங்களுடையது! தயவுசெய்து கொள்முதல் மையத்திற்கு வரவும்.",
+    notify_status_quality_check_msg: "உங்கள் பயிர் தற்போது தர பரிசோதனையில் உள்ளது.",
+    notify_status_procured_msg: "உங்கள் பயிர் கொள்முதல் செய்யப்பட்டது.",
+    notify_status_payment_initiated_msg: "பணம் செலுத்தும் பணி தொடங்கப்பட்டது.",
+    notify_status_paid_msg: "பணம் உங்கள் கணக்கில் செலுத்தப்பட்டது! நன்றி.",
+    notify_status_admin_cancelled_msg: "{centre} மையத்தில் {date} ({time}) முன்பதிவு ரத்து செய்யப்பட்டது: \"{reason}\". தயவுசெய்து புதிய நேரத்திற்கு மாற்றவும்.",
+    notify_status_cancelled_msg: "உங்கள் டோக்கன் ரத்து செய்யப்பட்டு வரிசையிலிருந்து நீக்கப்பட்டது.",
+    notify_voice_on: "குரல் அறிவிப்பு: ஆன்",
+    notify_voice_off: "குரல் அறிவிப்பு: ஆஃப்",
+
+    // Persistent Notification Center
+    notif_panel_title: "அறிவிப்புகள் (Notifications)",
+    notif_mark_all_read: "அனைத்தையும் படித்ததாகக் குறி",
+    notif_empty: "அறிவிப்புகள் எதுவும் இல்லை",
+    notif_empty_sub: "உங்கள் வரிசை நிலை மற்றும் டோக்கன் மாற்றங்கள் இங்கு தோன்றும்.",
+    notif_just_now: "சற்று முன்",
+    notif_min_ago: "நிமிடங்களுக்கு முன்",
+    notif_mark_read_btn: "படித்ததாகக் குறி",
+
+    // Geofenced Check-In
+    checkin_badge_checked_in: "✅ கொள்முதல் மையத்தில் வருகை பதிவாகியது (Checked in)",
+    checkin_badge_manual_checked_in: "✅ வருகை பதிவாகியது (Checked in)",
+    checkin_badge_not_near: "📍 இன்னும் மையத்திற்கு அருகில் வரவில்லை (500மீ எல்லைக்குள் தானாகப் பதிவாகும்)",
+    checkin_badge_distance: "📍 மையத்திலிருந்து ~{distance} தொலைவில் உள்ளீர்கள்",
+    checkin_manual_btn: "📍 இப்போது வருகை பதிவு செய்",
+    checkin_manual_loading: "பதிவாகிறது...",
+    checkin_loc_denied: "தானியங்கி வருகைப் பதிவுக்கு இருப்பிடத்தை இயக்கவும், அல்லது கைமுறையாக பதிவு செய்யவும்.",
+    checkin_success_notify: "நீங்கள் {centre} மையத்தை அடைந்துவிட்டீர்கள்! வருகை தானாகப் பதிவானது.",
+    admin_checked_in_badge: "✅ வந்துவிட்டார்",
+    admin_en_route_badge: "🚗 வழியில் உள்ளார்",
+
+    // Suggested Centres
+    suggested_centres_title: "உங்களுக்கான பரிந்துரைக்கப்பட்ட மையங்கள்",
+    suggested_centres_sub: "குறைந்த கூட்டம் மற்றும் குறைந்த காத்திருப்பு நேரம் கொண்ட அருகிலுள்ள மையங்கள்.",
+    suggested_click_to_select: "தேர்ந்தெடுக்க கிளிக் செய்க",
+    distance_away: "தொலைவில்",
+
+    // Centre Queue Public Board
+    centre_queue_title: "நேரலை மைய வரிசை பலகை",
+    centre_queue_subtitle: "நேரடி கொள்முதல் நிலையங்களுக்கான நிகழ்நேர டிஜிட்டல் டோக்கன் அறிவிப்பு பலகை",
+    centre_queue_now_serving: "தற்போது அழைக்கப்படும் டோக்கன் (Now Serving)",
+    centre_queue_up_next: "அடுத்த வரிசை (Up Next)",
+    centre_queue_no_active: "தற்போது எந்த டோக்கனும் செயலாக்கத்தில் இல்லை",
+    centre_queue_empty_queue: "இந்த மையத்தில் தற்போது காத்திருக்கும் டோக்கன்கள் இல்லை.",
+    centre_queue_anonymized_note: "பொது அறிவிப்பு பலகை · பாதுகாக்கப்பட்ட டோக்கன் விவரங்கள்",
+    centre_queue_live_badge: "நேரலை",
+    centre_queue_back_status: "← எனது நிலைக்கு திரும்பு",
+    centre_queue_switch_centre: "மையத்தை மாற்றுக:",
+    centre_queue_total_in_queue: "மொத்த டோக்கன்கள்",
+    centre_queue_waiting: "காத்திருப்போர்",
+
+    // Stages
+    stage_in_queue: "வரிசையில்",
+    stage_quality_check: "தர பரிசோதனை",
+    stage_procured: "கொள்முதல் முடிந்தது",
+    stage_payment_initiated: "பணம் செலுத்தப்படுகிறது",
+    stage_paid: "பணம் வழங்கப்பட்டது",
+    stage_cancelled: "ரத்து செய்யப்பட்டது",
+
+    // Crowd & Best Time & Alerts
+    crowd_low: "குறைந்த கூட்டம்",
+    crowd_medium: "நடுத்தர கூட்டம்",
+    crowd_high: "அதிக கூட்டம்",
+    best_time_label: "செல்ல சிறந்த நேரம்",
+    best_time_no_data: "போதுமான தரவு இன்னும் கிடைக்கவில்லை",
+    delay_alert_sent: "வரிசையில் உள்ள விவசாயிகளுக்கு தாமத அறிவிப்பு அனுப்பப்பட்டது",
+    delay_alert_prompt: "மையத்தில் காத்திருக்கும் விவசாயிகளுக்கான தாமத அறிவிப்பை உள்ளிடவும்",
+    delay_alert_btn: "தாமத அறிவிப்பு அனுப்பு",
+
+    // Chatbot & Voice Assistant
+    chat_widget_title: "Yieldo AI உதவியாளர்",
+    chat_widget_subtitle: "ஆங்கிலம் அல்லது தமிழில் கேளுங்கள்",
+    chat_input_placeholder: "டோக்கன், பயிர், மையம் பற்றி கேட்கவும்...",
+    chat_send_btn: "அனுப்பு",
+    chat_welcome_msg:
+      "வணக்கம்! நான் உங்கள் Yieldo உதவியாளர். டோக்கன் முன்பதிவு, வரிசை நிலை அல்லது கொள்முதல் மையங்கள் பற்றி என்னிடம் கேளுங்கள்.",
+    chat_open_btn: "உதவியாளரிடம் கேட்க",
+    voice_listening: "கேட்கிறது... இப்போது பேசுங்கள்",
+    voice_speaking: "பதில் பேசுகிறது...",
+    voice_toggle_on: "குரல் பதில்: ஆன்",
+    voice_toggle_off: "குரல் பதில்: ஆஃப்",
+    voice_not_supported:
+      "இந்த உலாவியில் குரல் உள்ளீடு ஆதரிக்கப்படவில்லை, Chrome உலாவியைப் பயன்படுத்தவும்",
+    voice_err_permission:
+      "மைக்ரோஃபோன் அனுமதி மறுக்கப்பட்டது. உலாவி அமைப்புகளில் அனுமதிக்கவும்.",
+    voice_err_no_speech: "பேச்சு எதுவும் கண்டறியப்படவில்லை. மீண்டும் பேசவும்.",
+    voice_err_general: "பேச்சை உணர முடியவில்லை. மீண்டும் முயற்சிக்கவும்.",
+
+    // FAQs
+    faq_section_title: "அடிக்கடி கேட்கப்படும் கேள்விகள்",
+    faqs: [
+      {
+        q: "எனது வரிசை நிலையை எவ்வாறு சரிபார்ப்பது?",
+        a: "'நிலை அறிதல்' (Check Status) பக்கத்திற்கு செல்லவும். நீங்கள் உள்நுழைந்துள்ளதால் உங்கள் டோக்கன்கள் தானாகவே தோன்றும். டோக்கனை கிளிக் செய்து நேரலை வரிசை எண் மற்றும் காத்திருப்பு நேரத்தை அறியலாம்.",
+      },
+      {
+        q: "காத்திருக்கும் நேரம் எவ்வாறு கணக்கிடப்படுகிறது?",
+        a: "மதிப்பிடப்பட்ட நேரம்: வரிசை நிலை எண் × மையத்தின் சராசரி செயலாக்க நேரம் என்ற அடிப்படையில் கணக்கிடப்படுகிறது. முன்புள்ள டோக்கன்கள் முடிவடையும் போது இது தானாகவே குறையும்.",
+      },
+      {
+        q: "எனது டோக்கனை ரத்து செய்ய முடியுமா?",
+        a: "ஆம். உங்கள் டோக்கன் 'வரிசையில்' (In Queue) அல்லது 'தர பரிசோதனை' (Quality Check) நிலையில் இருக்கும் போது, நிலை பக்கத்தில் 'டோக்கனை ரத்து செய்' பொத்தானை அழுத்தி ரத்து செய்யலாம்.",
+      },
+      {
+        q: "தர பரிசோதனைக்கு பிறகு என்ன நடக்கும்?",
+        a: "ஈரப்பதம் மற்றும் தர பரிசோதனை முடிந்தவுடன் உங்கள் நிலை 'கொள்முதல் முடிந்தது' (Procured) என மாறும். எடை சரிபார்க்கப்பட்டு நேரடி பணப்பரிவர்த்தனை தொடங்கப்படும்.",
+      },
+      {
+        q: "எனக்கான தொகை எப்போது வழங்கப்படும்?",
+        a: "கொள்முதல் முடிந்ததும் அரசு கொள்முதல் தொகை உங்கள் வங்கிக் கணக்கிற்கு அனுப்பப்படும். நிலை 'பணம் செலுத்தப்படுகிறது' என்பதிலிருந்து 'பணம் வழங்கப்பட்டது' என மாறும்.",
+      },
+      {
+        q: "எந்தெந்த மையங்கள் எனது பயிரை ஏற்கும்?",
+        a: "தஞ்சாவூர், விழுப்புரம், கடலூர் மையங்களில் நெல், கோதுமை, பருப்பு வகைகள், மக்காச்சோளம், நிலக்கடலை, பருத்தி கொள்முதல் செய்யப்படுகிறது. 'நேர முன்பதிவு' பக்கத்தில் அருகிலுள்ள மையத்தைத் தேர்வு செய்யலாம்.",
+      },
+    ],
+
+    // Support Tickets
+    ticket_hero_title: "விவசாயிகள் உதவி மையம் & குறைதீர்ப்பு",
+    ticket_hero_sub:
+      "டோக்கன் முன்பதிவு, பண வரவு, கொள்முதல் நிலைய செயல்பாடுகள் அல்லது செயலி குறித்த புகார்களை பதிவு செய்து உடனடி தீர்வு காணுங்கள்.",
+    ticket_hero_stub_label: "சராசரி தீர்வு நேரம்",
+    ticket_hero_stub_value: "< 24 மணி",
+    ticket_hero_stub_sub: "அரசு நேரடி கொள்முதல் உதவி மையம் · விரைவான தீர்வு",
+    ticket_tab_raise: "புதிய புகார் / கோரிக்கை",
+    ticket_tab_my: "எனது கோரிக்கைகள்",
+    ticket_card_title: "உதவி / புகார் விவரங்களை சமர்ப்பிக்கவும்",
+    ticket_type_label: "கோரிக்கை வகை (Ticket Type)",
+    ticket_type_placeholder: "வகையைத் தேர்ந்தெடுக்கவும்",
+    ticket_subtype_label: "உள் வகை (Subtype)",
+    ticket_subtype_placeholder: "உள் வகையைத் தேர்ந்தெடுக்கவும்",
+    ticket_desc_label: "விளக்கம் / விவரம்",
+    ticket_desc_placeholder: "உங்கள் புகார் அல்லது சந்தேகத்தை தெளிவாக உள்ளிடவும் (குறைந்தது 5 எழுத்துக்கள்)...",
+    ticket_state_label: "மாநிலம்",
+    ticket_district_label: "மாவட்டம்",
+    ticket_district_placeholder: "மாவட்டத்தைத் தேர்ந்தெடுக்கவும்",
+    ticket_village_label: "கிராமம் / ஊர்",
+    ticket_village_placeholder: "எ.கா. திருவையாறு",
+    ticket_pincode_label: "அஞ்சல் குறியீட்டு எண் (Pincode - 6 இலக்கங்கள்)",
+    ticket_pincode_placeholder: "எ.கா. 613001",
+    ticket_farmer_name_label: "விவசாயி பெயர்",
+    ticket_farmer_phone_label: "கைபேசி எண்",
+    ticket_submit_btn: "கோரிக்கையை சமர்ப்பிக்கவும்",
+    ticket_submit_loading: "சமர்ப்பிக்கப்படுகிறது...",
+    ticket_success_title: "கோரிக்கை வெற்றிகரமாக பதிவானது!",
+    ticket_success_msg:
+      "உங்கள் புகார் பதிவு செய்யப்பட்டுவிட்டது. கொள்முதல் உதவி அதிகாரிகள் விரைவில் பரிசீலனை செய்வார்கள்.",
+    ticket_success_token_badge: "உங்கள் கோரிக்கை எண் (Ticket ID)",
+    ticket_raise_another_btn: "மற்றொரு கோரிக்கை பதிவு செய்க",
+    ticket_view_my_btn: "எனது கோரிக்கைகளைக் காண்க",
+    ticket_my_title: "எனது புகார்கள் & கோரிக்கைகள்",
+    ticket_my_sub: "நீங்கள் சமர்ப்பித்த கோரிக்கைகளின் தற்போதைய நிலை மற்றும் தீர்வுகளை இங்கு கண்காணிக்கலாம்.",
+    ticket_my_empty_title: "கோரிக்கைகள் எதுவும் இல்லை",
+    ticket_my_empty_sub:
+      "நீங்கள் இதுவரை எந்த புகாரும் பதிவு செய்யவில்லை. சிரமம் ஏதேனும் இருப்பின் புதிய கோரிக்கையை சமர்ப்பிக்கவும்.",
+    ticket_empty_btn: "கோரிக்கை பதிவு செய்க",
+    ticket_id_label: "கோரிக்கை எண்",
+    ticket_created_label: "பதிவு செய்த தேதி",
+    ticket_category_label: "வகை",
+    ticket_location_label: "இடம்",
+    ticket_desc_view_label: "விவரம்",
+    ticket_status_label: "நிலை",
+    ticket_status_open: "திறக்கப்பட்டது (Open)",
+    ticket_status_in_progress: "பரிசீலனையில் (In Progress)",
+    ticket_status_resolved: "தீர்க்கப்பட்டது (Resolved)",
+    ticket_status_closed: "முடிக்கப்பட்டது (Closed)",
+    admin_tickets_title: "உதவி மற்றும் குறைதீர்ப்பு புகார்கள்",
+    admin_tickets_sub: "அனைத்து மாவட்டங்களின் விவசாயிகளின் புகார்கள் மற்றும் கோரிக்கைகளை நிர்வகிக்கவும்",
+    admin_tickets_filter_all: "அனைத்து புகார்கள்",
+    admin_tickets_empty: "இந்த வடிகட்டலில் புகார்கள் எதுவும் இல்லை.",
+    admin_ticket_update_status: "நிலையை மாற்று",
+    admin_ticket_action_inprogress: "பரிசீலனையில் என மாற்று",
+    admin_ticket_action_resolve: "தீர்க்கப்பட்டது என மாற்று",
+    admin_ticket_action_close: "முடிக்கப்பட்டது என மாற்று",
+    admin_ticket_action_reopen: "மீண்டும் திற",
+    err_ticket_type_req: "தயவுசெய்து கோரிக்கை வகையைத் தேர்ந்தெடுக்கவும்.",
+    err_ticket_subtype_req: "தயவுசெய்து உள் வகையைத் தேர்ந்தெடுக்கவும்.",
+    err_ticket_desc_req: "தயவுசெய்து விரிவான விளக்கத்தை உள்ளிடவும் (குறைந்தது 5 எழுத்துக்கள்).",
+    err_ticket_district_req: "தயவுசெய்து மாவட்டத்தைத் தேர்ந்தெடுக்கவும்.",
+    err_ticket_village_req: "தயவுசெய்து உங்கள் கிராமம் அல்லது ஊர் பெயரை உள்ளிடவும்.",
+    err_ticket_pincode_invalid: "சரியான 6 இலக்க அஞ்சல் குறியீட்டு எண்ணை (Pincode) உள்ளிடவும்.",
+    err_ticket_phone_invalid: "சரியான 10 இலக்க கைபேசி எண்ணை உள்ளிடவும்.",
+    err_load_tickets: "கோரிக்கைகளை ஏற்றுவதில் பிழை ஏற்பட்டது.",
+  },
+};
+
+export const cropNames = {
+  en: {
+    Paddy: "Paddy",
+    Wheat: "Wheat",
+    Pulses: "Pulses",
+    Maize: "Maize",
+    Groundnut: "Groundnut",
+    Cotton: "Cotton",
+    Sugarcane: "Sugarcane",
+    Millets: "Millets",
+  },
+  ta: {
+    Paddy: "நெல்",
+    Wheat: "கோதுமை",
+    Pulses: "பருப்பு வகைகள்",
+    Maize: "சோளம்",
+    Groundnut: "நிலக்கடலை",
+    Cotton: "பருத்தி",
+    Sugarcane: "கரும்பு",
+    Millets: "சிறுதானியங்கள்",
+  },
+};
+
+export const districtNames = {
+  en: {
+    Thanjavur: "Thanjavur",
+    Villupuram: "Villupuram",
+    Cuddalore: "Cuddalore",
+  },
+  ta: {
+    Thanjavur: "தஞ்சாவூர்",
+    Villupuram: "விழுப்புரம்",
+    Cuddalore: "கடலூர்",
+  },
+};
+
+export const centreNames = {
+  en: {
+    C01: "Thanjavur Main Paddy Direct Purchase Centre",
+    C02: "Kumbakonam Grain & Pulse Centre",
+    C03: "Papanasam Paddy Regulated Market",
+    C04: "Pattukkottai Millet & Pulse Centre",
+    C05: "Orathanadu Direct Purchase Centre",
+    C06: "Villupuram Central Grain Mandi",
+    C07: "Tindivanam Oilseed & Millet Centre",
+    C08: "Gingee Agricultural Marketing Centre",
+    C09: "Kallakurichi Main Paddy Centre",
+    C10: "Vikravandi Pulse & Grain Centre",
+    C11: "Cuddalore Coastal Grain Centre",
+    C12: "Panruti Pulse & Millet Centre",
+    C13: "Chidambaram Paddy Purchase Centre",
+    C14: "Vridhachalam Grain & Oilseed Centre",
+    C15: "Kattumannarkoil Regulated Centre",
+  },
+  ta: {
+    C01: "தஞ்சாவூர் தலைமை நேரடி நெல் கொள்முதல் நிலையம்",
+    C02: "கும்பகோணம் தானிய மற்றும் பருப்பு கொள்முதல் மையம்",
+    C03: "பாபநாசம் நெல் ஒழுங்குமுறை விற்பனைக் கூடம்",
+    C04: "பட்டுக்கோட்டை சிறுதானிய & பருப்பு மையம்",
+    C05: "ஒரத்தநாடு நேரடி நெல் கொள்முதல் நிலையம்",
+    C06: "விழுப்புரம் மத்திய தானிய மண்டி",
+    C07: "திண்டிவனம் எண்ணெய்வித்து & சிறுதானிய மையம்",
+    C08: "செஞ்சி வேளாண்மை விற்பனை மையம்",
+    C09: "கள்ளக்குறிச்சி தலைமை நெல் கொள்முதல் மையம்",
+    C10: "விக்கிரவாண்டி பருப்பு & தானிய மையம்",
+    C11: "கடலூர் கடலோர தானிய கொள்முதல் மையம்",
+    C12: "பண்ருட்டி பருப்பு & சிறுதானிய மையம்",
+    C13: "சிதம்பரம் நெல் கொள்முதல் நிலையம்",
+    C14: "விருத்தாசலம் தானிய & எண்ணெய்வித்து மையம்",
+    C15: "காட்டுமன்னார்கோவில் ஒழுங்குமுறை விற்பனை மையம்",
+    "Thanjavur Main Paddy Direct Purchase Centre": "தஞ்சாவூர் தலைமை நேரடி நெல் கொள்முதல் நிலையம்",
+    "Kumbakonam Grain & Pulse Centre": "கும்பகோணம் தானிய மற்றும் பருப்பு கொள்முதல் மையம்",
+    "Papanasam Paddy Regulated Market": "பாபநாசம் நெல் ஒழுங்குமுறை விற்பனைக் கூடம்",
+    "Pattukkottai Millet & Pulse Centre": "பட்டுக்கோட்டை சிறுதானிய & பருப்பு மையம்",
+    "Orathanadu Direct Purchase Centre": "ஒரத்தநாடு நேரடி நெல் கொள்முதல் நிலையம்",
+    "Villupuram Central Grain Mandi": "விழுப்புரம் மத்திய தானிய மண்டி",
+    "Tindivanam Oilseed & Millet Centre": "திண்டிவனம் எண்ணெய்வித்து & சிறுதானிய மையம்",
+    "Gingee Agricultural Marketing Centre": "செஞ்சி வேளாண்மை விற்பனை மையம்",
+    "Kallakurichi Main Paddy Centre": "கள்ளக்குறிச்சி தலைமை நெல் கொள்முதல் மையம்",
+    "Vikravandi Pulse & Grain Centre": "விக்கிரவாண்டி பருப்பு & தானிய மையம்",
+    "Cuddalore Coastal Grain Centre": "கடலூர் கடலோர தானிய கொள்முதல் மையம்",
+    "Panruti Pulse & Millet Centre": "பண்ருட்டி பருப்பு & சிறுதானிய மையம்",
+    "Chidambaram Paddy Purchase Centre": "சிதம்பரம் நெல் கொள்முதல் நிலையம்",
+    "Vridhachalam Grain & Oilseed Centre": "விருத்தாசலம் தானிய & எண்ணெய்வித்து மையம்",
+    "Kattumannarkoil Regulated Centre": "காட்டுமன்னார்கோவில் ஒழுங்குமுறை விற்பனை மையம்",
+  },
+};
+
+export const ticketTypeNames = {
+  en: {
+    Operational: "Operational",
+    Payment: "Payment",
+    Account: "Account",
+    Information: "Information",
+    "Technical Issue": "Technical Issue",
+    Complaint: "Complaint",
+    Grievance: "Grievance",
+  },
+  ta: {
+    Operational: "இயக்க சிக்கல்கள் (Operational)",
+    Payment: "பணப்பரிவர்த்தனை (Payment)",
+    Account: "கணக்கு & சுயவிவரம் (Account)",
+    Information: "தகவல் & வழிகாட்டல் (Information)",
+    "Technical Issue": "தொழில்நுட்ப கோளாறு (Technical Issue)",
+    Complaint: "புகார் (Complaint)",
+    Grievance: "குறைதீர்ப்பு (Grievance)",
+  },
+};
+
+export const ticketSubtypeNames = {
+  en: {
+    "Slot Booking Issue": "Slot Booking Issue",
+    "Queue Delay": "Queue Delay",
+    "Centre Not Listed": "Centre Not Listed",
+    "Payment Not Received": "Payment Not Received",
+    "Incorrect Amount": "Incorrect Amount",
+    "Receipt Issue": "Receipt Issue",
+    "Login Issue": "Login Issue",
+    "Phone Number Change": "Phone Number Change",
+    "Profile Correction": "Profile Correction",
+    "MSP Rate Query": "MSP Rate Query",
+    "Centre Details": "Centre Details",
+    "Crop Eligibility": "Crop Eligibility",
+    "App Not Working": "App Not Working",
+    "Notification Not Received": "Notification Not Received",
+    "Voice/Chatbot Issue": "Voice/Chatbot Issue",
+    "Staff Behaviour": "Staff Behaviour",
+    "Centre Condition": "Centre Condition",
+    "Unfair Treatment": "Unfair Treatment",
+    "Procurement Dispute": "Procurement Dispute",
+    "Quality Check Dispute": "Quality Check Dispute",
+    Other: "Other",
+  },
+  ta: {
+    "Slot Booking Issue": "டோக்கன் முன்பதிவு சிக்கல்",
+    "Queue Delay": "வரிசை தாமதம்",
+    "Centre Not Listed": "மையம் பட்டியலில் இல்லை",
+    "Payment Not Received": "தொகை வங்கியில் வரவு வைக்கப்படவில்லை",
+    "Incorrect Amount": "தவறான கொள்முதல் தொகை",
+    "Receipt Issue": "ரசீது பெறுவதில் சிக்கல்",
+    "Login Issue": "உள்நுழைவு சிக்கல்",
+    "Phone Number Change": "கைபேசி எண் மாற்றம்",
+    "Profile Correction": "விவர திருத்தம்",
+    "MSP Rate Query": "அரசு ஆதார விலை (MSP) சந்தேகம்",
+    "Centre Details": "மைய விவரங்கள்",
+    "Crop Eligibility": "பயிர் தகுதி விவரம்",
+    "App Not Working": "செயலி இயங்கவில்லை",
+    "Notification Not Received": "அறிவிப்பு / SMS வரவில்லை",
+    "Voice/Chatbot Issue": "குரல் / சாட்பாட் சிக்கல்",
+    "Staff Behaviour": "பணியாளர் நடத்தை",
+    "Centre Condition": "மையத்தின் அடிப்படை வசதிகள்",
+    "Unfair Treatment": "முறைகேடு / பாரபட்சம்",
+    "Procurement Dispute": "கொள்முதல் மறுப்பு / சர்ச்சை",
+    "Quality Check Dispute": "தர பரிசோதனை சர்ச்சை",
+    Other: "மற்றவை",
+  },
+};
+
+export const ticketStatusNames = {
+  en: {
+    open: "Open",
+    in_progress: "In Progress",
+    resolved: "Resolved",
+    closed: "Closed",
+    reopened: "Reopened",
+  },
+  ta: {
+    open: "திறக்கப்பட்டது",
+    in_progress: "பரிசீலனையில்",
+    resolved: "தீர்க்கப்பட்டது",
+    closed: "முடிக்கப்பட்டது",
+    reopened: "மீண்டும் திறக்கப்பட்டது",
+  },
+};
+
+export const LanguageContext = createContext({
+  lang: "en",
+  setLang: () => {},
+  t: (key) => key,
+  faqs: translations.en.faqs,
+  tCrop: (crop) => crop,
+  tDistrict: (district) => district,
+  tCentre: (centre) => centre?.name || centre || "",
+  tTicketType: (type) => type,
+  tTicketSubtype: (subtype) => subtype,
+  tTicketStatus: (status) => status,
+});
+
+export function LanguageProvider({ children }) {
+  const [lang, setLang] = useState("en");
+
+  const t = (key) => {
+    return translations[lang]?.[key] || translations.en[key] || key;
+  };
+
+  const faqs = translations[lang]?.faqs || translations.en.faqs || [];
+
+  const tCrop = (crop) => {
+    if (!crop) return "";
+    if (lang === "ta") {
+      return cropNames.ta[crop] || crop;
+    }
+    return crop;
+  };
+
+  const tDistrict = (district) => {
+    if (!district) return "";
+    if (lang === "ta") {
+      return districtNames.ta[district] || district;
+    }
+    return district;
+  };
+
+  const tCentre = (centre) => {
+    if (!centre) return "";
+    const id = typeof centre === "object" ? centre.id : centre;
+    const name = typeof centre === "object" ? centre.name : centre;
+    if (lang === "ta") {
+      return centreNames.ta[id] || centreNames.ta[name] || name || id;
+    }
+    return name || id;
+  };
+
+  const tTicketType = (type) => {
+    if (!type) return "";
+    if (lang === "ta") {
+      return ticketTypeNames.ta[type] || type;
+    }
+    return ticketTypeNames.en[type] || type;
+  };
+
+  const tTicketSubtype = (subtype) => {
+    if (!subtype) return "";
+    if (lang === "ta") {
+      return ticketSubtypeNames.ta[subtype] || subtype;
+    }
+    return ticketSubtypeNames.en[subtype] || subtype;
+  };
+
+  const tTicketStatus = (status) => {
+    if (!status) return "";
+    const clean = String(status).toLowerCase();
+    if (lang === "ta") {
+      return ticketStatusNames.ta[clean] || status;
+    }
+    return ticketStatusNames.en[clean] || status;
+  };
+
+  return createElement(
+    LanguageContext.Provider,
+    {
+      value: {
+        lang,
+        setLang,
+        t,
+        faqs,
+        tCrop,
+        tDistrict,
+        tCentre,
+        tTicketType,
+        tTicketSubtype,
+        tTicketStatus,
+      },
+    },
+    children
+  );
+}
+
+export function useLanguage() {
+  return useContext(LanguageContext);
+}
+

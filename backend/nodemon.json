@@ -1,0 +1,10 @@
+{
+  "watch": ["routes", "data", "utils", "server.js", ".env"],
+  "ext": "js,mjs,cjs,json,env",
+  "ignore": [
+    "data/persisted-store.json",
+    "data/*.tmp",
+    "*.tmp",
+    "node_modules/**"
+  ]
+}
