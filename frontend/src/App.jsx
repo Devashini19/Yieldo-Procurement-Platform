@@ -1,14 +1,17 @@
 import { useState, useEffect, useRef } from "react";
 import { Routes, Route, Link, useLocation, useNavigate } from "react-router-dom";
 import Register from "./pages/Register.jsx";
+import FarmerRegister from "./pages/FarmerRegister.jsx";
 import Status from "./pages/Status.jsx";
 import RaiseTicket from "./pages/RaiseTicket.jsx";
 import Admin from "./pages/Admin.jsx";
 import FarmerLogin from "./pages/FarmerLogin.jsx";
 import AdminLogin from "./pages/AdminLogin.jsx";
+import AdminRegister from "./pages/AdminRegister.jsx";
 import ChatWidget from "./components/ChatWidget.jsx";
 import NotificationBell, { playNotificationSound } from "./components/NotificationBell.jsx";
 import FarmerProfileMenu from "./components/FarmerProfileMenu.jsx";
+import AdminProfileMenu from "./components/AdminProfileMenu.jsx";
 import { LanguageProvider, useLanguage } from "./i18n.js";
 import { ConnectivityProvider, useConnectivity } from "./context/ConnectivityContext.jsx";
 import { api } from "./api.js";
@@ -16,6 +19,8 @@ import { api } from "./api.js";
 function Topbar({
   farmerUser,
   onLogout,
+  adminToken,
+  onAdminLogout,
   notifications,
   onMarkRead,
   onMarkAllRead,
@@ -104,7 +109,15 @@ function Topbar({
         )}
       </div>
       <div className="nav-links" style={{ alignItems: "center", gap: 12 }}>
-        {farmerUser ? (
+        {adminToken ? (
+          <>
+            <Link to="/admin" className={isActive("/admin")}>Admin Control Panel</Link>
+            <AdminProfileMenu
+              adminToken={adminToken}
+              onLogout={onAdminLogout}
+            />
+          </>
+        ) : farmerUser ? (
           <>
             <Link to="/" className={isActive("/")}>{t("nav_book")}</Link>
             <Link to="/status" className={isActive("/status")}>{t("nav_status")}</Link>
@@ -126,7 +139,8 @@ function Topbar({
           </>
         ) : (
           <>
-            <Link to="/" className={isActive("/")}>{t("nav_login")}</Link>
+            <Link to="/" className={isActive("/") || isActive("/login")}>{t("nav_login")}</Link>
+            <Link to="/register-farmer" className={isActive("/register-farmer") || isActive("/signup")}>{t("nav_signup")}</Link>
             <Link to="/admin" className={isActive("/admin")}>{t("nav_admin")}</Link>
           </>
         )}
@@ -174,7 +188,11 @@ function MainLayout({
   }
 
   function handleAdminLogout() {
+    if (adminToken) {
+      api.logoutAdmin(adminToken).catch(() => {});
+    }
     setAdminToken(null);
+    navigate("/admin");
   }
 
   return (
@@ -182,6 +200,8 @@ function MainLayout({
       <Topbar
         farmerUser={farmerUser}
         onLogout={handleFarmerLogout}
+        adminToken={adminToken}
+        onAdminLogout={handleAdminLogout}
         notifications={notifications}
         onMarkRead={onMarkRead}
         onMarkAllRead={onMarkAllRead}
@@ -196,6 +216,24 @@ function MainLayout({
               <FarmerLogin onLogin={setFarmerUser} />
             )
           }
+        />
+        <Route
+          path="/login"
+          element={
+            farmerUser ? (
+              <Register farmerUser={farmerUser} />
+            ) : (
+              <FarmerLogin onLogin={setFarmerUser} />
+            )
+          }
+        />
+        <Route
+          path="/register-farmer"
+          element={<FarmerRegister />}
+        />
+        <Route
+          path="/signup"
+          element={<FarmerRegister />}
         />
         <Route
           path="/status"
@@ -224,14 +262,22 @@ function MainLayout({
           path="/admin"
           element={
             adminToken ? (
-              <Admin onLogout={handleAdminLogout} />
+              <Admin onLogout={handleAdminLogout} adminToken={adminToken} />
             ) : (
               <AdminLogin onLogin={setAdminToken} />
             )
           }
         />
+        <Route
+          path="/admin/register"
+          element={<AdminRegister />}
+        />
+        <Route
+          path="/admin-register"
+          element={<AdminRegister />}
+        />
       </Routes>
-      {!isAdmin && <ChatWidget />}
+      {!isAdmin && <ChatWidget farmerUser={farmerUser} />}
     </div>
   );
 }
@@ -241,6 +287,30 @@ export default function App() {
   const [adminToken, setAdminToken] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const seenNotifIdsRef = useRef(new Set());
+
+  // Restore farmer session directly from backend persistence on page mount/refresh
+  useEffect(() => {
+    const raw = localStorage.getItem("yieldo_farmer_session");
+    if (!raw) return;
+    try {
+      const session = JSON.parse(raw);
+      const queryId = session.farmerId || session.identifier || session.phone || session.email;
+      if (!queryId) return;
+      api
+        .getFarmerProfile(queryId, session.name || "")
+        .then((res) => {
+          if (res && (res.farmerId || res.identifier)) {
+            setFarmerUser(res);
+          }
+        })
+        .catch((err) => {
+          console.warn("Farmer session restore failed:", err);
+          localStorage.removeItem("yieldo_farmer_session");
+        });
+    } catch {
+      localStorage.removeItem("yieldo_farmer_session");
+    }
+  }, []);
 
   const farmerIdentifier = farmerUser?.identifier || farmerUser?.phone || farmerUser?.email;
 
@@ -271,9 +341,16 @@ export default function App() {
           const map = new Map();
           // Add backend notifications first
           backendNotifs.forEach((item) => map.set(item.id, item));
-          // Add local notifications if not in map
+          // Add local notifications if not in map and not matching an existing backend notification
           prev.forEach((item) => {
-            if (!map.has(item.id)) {
+            const isDuplicate =
+              map.has(item.id) ||
+              backendNotifs.some(
+                (b) =>
+                  b.id === item.id ||
+                  (b.tokenId && item.tokenId && b.tokenId === item.tokenId && b.message === item.message)
+              );
+            if (!isDuplicate) {
               map.set(item.id, item);
             }
           });
@@ -294,27 +371,44 @@ export default function App() {
 
   function handleSetFarmerUser(user) {
     if (!user) {
+      localStorage.removeItem("yieldo_farmer_session");
       setNotifications([]); // reset notifications on logout
       seenNotifIdsRef.current.clear();
+      setFarmerUser(null);
+    } else {
+      const sessionData = {
+        farmerId: user.farmerId,
+        identifier: user.identifier || user.phone || user.email,
+        name: user.name,
+      };
+      localStorage.setItem("yieldo_farmer_session", JSON.stringify(sessionData));
+      setFarmerUser(user);
     }
-    setFarmerUser(user);
   }
 
-  function handleAddNotification({ tokenId, title, message }) {
+  function handleAddNotification({ id, tokenId, farmerName, crop, title, message }) {
     // Play short audio chime
     playNotificationSound();
 
+    const notifId = id || `${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
     // Add unread notification to top of list
     const newEntry = {
-      id: `${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      id: notifId,
       tokenId,
+      farmerName,
+      crop,
       title: title || "Queue Alert",
       message,
       timestamp: Date.now(),
       read: false,
     };
-    seenNotifIdsRef.current.add(newEntry.id);
-    setNotifications((prev) => [newEntry, ...prev]);
+    seenNotifIdsRef.current.add(notifId);
+    setNotifications((prev) => {
+      if (prev.some((n) => n.id === notifId || (tokenId && n.tokenId === tokenId && n.message === message))) {
+        return prev;
+      }
+      return [newEntry, ...prev];
+    });
   }
 
   function handleMarkRead(id) {

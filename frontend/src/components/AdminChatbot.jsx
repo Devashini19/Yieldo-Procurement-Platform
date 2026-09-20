@@ -37,6 +37,51 @@ export default function AdminChatbot() {
     });
   }, [lang]);
 
+  const [voices, setVoices] = useState([]);
+  const langRef = useRef(lang);
+  useEffect(() => {
+    langRef.current = lang;
+  }, [lang]);
+
+  // Listen to speech synthesis voices
+  useEffect(() => {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      const updateVoices = () => {
+        const available = window.speechSynthesis.getVoices() || [];
+        if (available.length > 0) {
+          setVoices(available);
+          console.log(
+            `[AdminChatbot SpeechSynthesis] Loaded ${available.length} voices on device:`,
+            available.map((v) => `${v.name} [${v.lang}]${v.default ? " (default)" : ""}`)
+          );
+          const tamilVoice = available.find(
+            (v) => (v.lang && /^ta/i.test(v.lang)) || /tamil/i.test(v.name) || /தமிழ்/i.test(v.name)
+          );
+          if (tamilVoice) {
+            console.log("[AdminChatbot SpeechSynthesis] Dedicated Tamil voice found:", tamilVoice.name, `[${tamilVoice.lang}]`);
+          } else {
+            console.warn(
+              "[AdminChatbot SpeechSynthesis] Notice: No dedicated Tamil voice pack (ta-IN) detected in getVoices(). " +
+              "Tamil responses will skip audio playback to prevent English voice mispronunciation; text will display visibly."
+            );
+          }
+        }
+      };
+
+      updateVoices();
+
+      window.speechSynthesis.onvoiceschanged = updateVoices;
+      window.speechSynthesis.addEventListener("voiceschanged", updateVoices);
+
+      return () => {
+        window.speechSynthesis.removeEventListener("voiceschanged", updateVoices);
+        if (window.speechSynthesis.onvoiceschanged === updateVoices) {
+          window.speechSynthesis.onvoiceschanged = null;
+        }
+      };
+    }
+  }, []);
+
   useEffect(() => {
     if (isOpen) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -44,50 +89,162 @@ export default function AdminChatbot() {
   }, [messages, isOpen, isListening, voiceError]);
 
   const speakReply = useCallback(
-    (text) => {
+    (text, overrideLang) => {
       if (!voiceReplyEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) {
         return;
       }
 
-      try {
-        window.speechSynthesis.cancel();
+      const getVoicesList = () => {
+        const direct = window.speechSynthesis.getVoices();
+        if (direct && direct.length > 0) return direct;
+        if (voices && voices.length > 0) return voices;
+        return [];
+      };
 
-        // Strip markdown symbols for clearer speech
-        const cleanText = text.replace(/[*#`_•]/g, " ").replace(/\s+/g, " ").trim();
+      const doSpeak = (availableVoices) => {
+        try {
+          window.speechSynthesis.cancel();
 
-        const utterance = new SpeechSynthesisUtterance(cleanText);
-        const targetLocale = lang === "ta" ? "ta-IN" : "en-IN";
-        utterance.lang = targetLocale;
+          // Strip markdown symbols for clearer speech
+          const cleanText = text ? text.replace(/[*#`_•]/g, " ").replace(/\s+/g, " ").trim() : "";
+          if (!cleanText) {
+            setIsSpeaking(false);
+            return;
+          }
 
-        const voices = window.speechSynthesis.getVoices();
-        const matchVoice =
-          voices.find((v) => v.lang === targetLocale) ||
-          voices.find((v) => v.lang.startsWith(lang === "ta" ? "ta" : "en"));
+          // Evaluate current language dynamically on every message
+          const activeLang = overrideLang || langRef.current || lang;
+          const isTamilText = /[\u0B80-\u0BFF]/.test(cleanText);
+          const isTamil = activeLang === "ta" || isTamilText;
 
-        if (matchVoice) {
-          utterance.voice = matchVoice;
+          // Always log available voices list (name + lang) as requested
+          console.log(
+            `[AdminChatbot SpeechSynthesis] Available voices list (${availableVoices.length}):`,
+            availableVoices.map((v) => `${v.name} (${v.lang})`)
+          );
+          console.log(
+            `[AdminChatbot SpeechSynthesis] doSpeak called -> activeLang: "${activeLang}", isTamilText: ${isTamilText}, final isTamil: ${isTamil}`
+          );
+
+          if (isTamil) {
+            const matchTamilVoice =
+              availableVoices.find((v) => v.lang && /^ta[-_]IN$/i.test(v.lang)) ||
+              availableVoices.find((v) => v.lang && /^ta[-_]/i.test(v.lang)) ||
+              availableVoices.find((v) => v.lang && /^ta$/i.test(v.lang)) ||
+              availableVoices.find((v) => /tamil/i.test(v.name) || /தமிழ்/i.test(v.name) || /tamil/i.test(v.lang));
+
+            if (!matchTamilVoice) {
+              console.warn(
+                "[AdminChatbot SpeechSynthesis] Notice: No dedicated Tamil voice pack (ta-IN) installed on this browser/OS. " +
+                "Skipping audio playback for Tamil to prevent English voice mispronunciation. " +
+                "Tamil text response remains clearly visible in the chat."
+              );
+              console.log("[AdminChatbot SpeechSynthesis Speak Debug - Tamil]", {
+                text: cleanText,
+                utteranceLang: "ta-IN",
+                voiceName: "none (Tamil voice not installed - skipped audio fallback)",
+                voiceLang: "none",
+                hasDedicatedVoice: false,
+                action: "graceful silent fallback (text only)",
+              });
+              setIsSpeaking(false);
+              return;
+            }
+
+            const utterance = new SpeechSynthesisUtterance(cleanText);
+            utterance.text = cleanText;
+            utterance.lang = "ta-IN";
+            utterance.rate = 0.92;
+            utterance.pitch = 1.0;
+            utterance.voice = matchTamilVoice;
+            console.log("[AdminChatbot SpeechSynthesis] Selected dedicated Tamil voice:", matchTamilVoice.name, `(${matchTamilVoice.lang})`);
+
+            utterance.onstart = () => setIsSpeaking(true);
+            utterance.onend = () => setIsSpeaking(false);
+            utterance.onerror = (e) => {
+              console.warn("[AdminChatbot SpeechSynthesis] Utterance error:", e);
+              setIsSpeaking(false);
+            };
+
+            console.log("[AdminChatbot SpeechSynthesis Speak Debug - Tamil]", {
+              text: utterance.text,
+              utteranceLang: utterance.lang,
+              voiceName: utterance.voice.name,
+              voiceLang: utterance.voice.lang,
+              hasDedicatedVoice: true,
+              action: "speaking via Tamil voice",
+            });
+
+            window.speechSynthesis.resume();
+            window.speechSynthesis.speak(utterance);
+          } else {
+            const utterance = new SpeechSynthesisUtterance(cleanText);
+            utterance.text = cleanText;
+            utterance.lang = "en-IN";
+            utterance.rate = 1.0;
+
+            const matchEnglishVoice =
+              availableVoices.find((v) => v.lang && /^en[-_]IN$/i.test(v.lang)) ||
+              availableVoices.find((v) => v.lang && /^en[-_]/i.test(v.lang)) ||
+              availableVoices.find((v) => v.lang && /^en$/i.test(v.lang)) ||
+              availableVoices.find((v) => /india/i.test(v.name) || /heera/i.test(v.name) || /ravi/i.test(v.name));
+
+            if (matchEnglishVoice) {
+              utterance.voice = matchEnglishVoice;
+              console.log("[AdminChatbot SpeechSynthesis] Selected English voice:", matchEnglishVoice.name, `(${matchEnglishVoice.lang})`);
+            }
+            utterance.onstart = () => setIsSpeaking(true);
+            utterance.onend = () => setIsSpeaking(false);
+            utterance.onerror = (e) => {
+              console.warn("[AdminChatbot SpeechSynthesis] Utterance error:", e);
+              setIsSpeaking(false);
+            };
+
+            console.log("[AdminChatbot SpeechSynthesis Speak Debug - English]", {
+              text: utterance.text,
+              utteranceLang: utterance.lang,
+              voiceName: utterance.voice ? utterance.voice.name : "none (browser default)",
+              voiceLang: utterance.voice ? utterance.voice.lang : "none (browser default)",
+              hasDedicatedVoice: !!utterance.voice,
+            });
+
+            window.speechSynthesis.resume();
+            window.speechSynthesis.speak(utterance);
+          }
+        } catch (err) {
+          console.error("[AdminChatbot SpeechSynthesis] Speak exception:", err);
+          setIsSpeaking(false);
         }
+      };
 
-        utterance.onstart = () => setIsSpeaking(true);
-        utterance.onend = () => setIsSpeaking(false);
-        utterance.onerror = () => setIsSpeaking(false);
-
-        window.speechSynthesis.speak(utterance);
-      } catch {
-        setIsSpeaking(false);
+      const currentVoices = getVoicesList();
+      if (currentVoices.length > 0) {
+        doSpeak(currentVoices);
+      } else {
+        let handled = false;
+        const onVoicesReady = () => {
+          if (handled) return;
+          handled = true;
+          const loaded = getVoicesList();
+          doSpeak(loaded);
+        };
+        window.speechSynthesis.addEventListener("voiceschanged", onVoicesReady, { once: true });
+        setTimeout(onVoicesReady, 250);
       }
     },
-    [voiceReplyEnabled, lang]
+    [voiceReplyEnabled, lang, voices]
   );
 
   async function sendUserMessage(text) {
     const userMessage = text.trim();
     if (!userMessage || loading) return;
 
+    const activeCurrentLang = langRef.current || lang;
+
     // 1. Console log right before fetch call
     console.log("[AdminChatbot Frontend] Sending message to /api/admin/chatbot/message:", {
       message: userMessage,
-      language: lang,
+      language: activeCurrentLang,
     });
 
     setVoiceError("");
@@ -99,7 +256,7 @@ export default function AdminChatbot() {
     try {
       const data = await api.sendAdminChatbotMessage({
         message: userMessage,
-        language: lang,
+        language: activeCurrentLang,
         history: newHistory,
       });
 
@@ -108,15 +265,15 @@ export default function AdminChatbot() {
 
       const replyText = data.reply || "Operations query completed.";
       setMessages((prev) => [...prev, { sender: "bot", text: replyText }]);
-      speakReply(replyText);
+      speakReply(replyText, activeCurrentLang);
     } catch (err) {
       console.error("[AdminChatbot Frontend] Error sending chatbot message:", err);
       const fallbackText =
-        lang === "ta"
+        activeCurrentLang === "ta"
           ? "மன்னிக்கவும், தகவலைப் பெறுவதில் பிழை ஏற்பட்டது. சர்வர் இணைப்பை சரிபார்க்கவும்."
           : "Operational query failed. Please verify server connection and try again.";
       setMessages((prev) => [...prev, { sender: "bot", text: fallbackText }]);
-      speakReply(fallbackText);
+      speakReply(fallbackText, activeCurrentLang);
     } finally {
       setLoading(false);
     }

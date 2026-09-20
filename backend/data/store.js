@@ -6,6 +6,13 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import bcrypt from "bcryptjs";
+import crypto from "crypto";
+import {
+  normalizeIndianMobile,
+  validateIndianMobile,
+  INDIAN_MOBILE_ERROR_MSG,
+} from "../utils/phone.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,8 +41,34 @@ let centres = [
   { id: "C15", code: "KMK", name: "Kattumannarkoil Regulated Centre", district: "Cuddalore", crops: ["Paddy", "Sugarcane"], avgProcessMinutes: 12, dailyCapacity: 40, lat: 11.2750, lng: 79.5580, operatingHours: { startTime: "06:00 AM", endTime: "06:00 PM" } },
 ];
 
-let farmers = []; // { id, name, phone, crop, quantityKg, centreId, status, position, createdAt, ... }
+export const DISTRICT_CODE_MAP = {
+  Thanjavur: "THJ",
+  Villupuram: "VPM",
+  Cuddalore: "CDL",
+};
+
+export const ADMIN_DISTRICT_CODE_MAP = {
+  Thanjavur: "TNJ",
+  Villupuram: "VPM",
+  Cuddalore: "CDL",
+};
+
+let farmers = []; // { id, farmerId, district, districtCode, name, phone, crop, quantityKg, centreId, status, position, createdAt, ... }
+let registeredFarmers = []; // { farmerId, district, districtCode, name, phone, email, primaryCrop, preferredCentreId, registeredAt, createdAt }
 let centreCounters = {};
+let farmerIdCounters = {
+  THJ: 0,
+  VPM: 0,
+  CDL: 0,
+};
+export let registeredAdmins = []; // { adminId, name, dob, district, districtCode, procurementCentreName, alternatePhone, phone, email, signupMethod, registeredAt, createdAt }
+export let adminIdCounters = {
+  THJ: 0,
+  VPM: 0,
+  CDL: 0,
+  ADM: 0,
+};
+export const inFlightAdminIds = new Set();
 let tickets = []; // { id, farmerPhone, farmerName, ticketType, ticketSubtype, description, state, district, village, pincode, status, createdAt, updatedAt }
 let ticketCounter = 1;
 let swapRequests = []; // { id, senderTokenId, senderName, senderPhone, senderEmail, senderSlotDate, senderSlotTime, senderCrop, receiverTokenId, receiverName, receiverPhone, receiverEmail, receiverSlotDate, receiverSlotTime, receiverCrop, centreId, status, createdAt, respondedAt }
@@ -46,11 +79,238 @@ let procurementHistoryRecords = []; // Permanent immutable point-in-time snapsho
 
 let saveTimeout = null;
 
+export function resolveDistrictCode(districtOrCentreId) {
+  if (!districtOrCentreId) return null;
+  const str = String(districtOrCentreId).trim();
+
+  // If a centre ID like "C01" or code like "TNJ" is passed
+  const centre = centres.find(
+    (c) => c.id.toUpperCase() === str.toUpperCase() || c.code.toUpperCase() === str.toUpperCase()
+  );
+  if (centre && centre.district) {
+    const matched = DISTRICT_CODE_MAP[centre.district];
+    if (matched) return matched;
+  }
+
+  // Direct match in DISTRICT_CODE_MAP keys or values (case-insensitive)
+  const norm = str.toLowerCase();
+  for (const [distName, distCode] of Object.entries(DISTRICT_CODE_MAP)) {
+    if (distName.toLowerCase() === norm || distCode.toLowerCase() === norm) {
+      return distCode;
+    }
+  }
+
+  return null;
+}
+
+export function resolveDistrictName(districtOrCentreId) {
+  const code = resolveDistrictCode(districtOrCentreId);
+  if (!code) return null;
+  for (const [distName, distCode] of Object.entries(DISTRICT_CODE_MAP)) {
+    if (distCode === code) return distName;
+  }
+  return null;
+}
+
+export function generateFarmerId(districtOrCentreId) {
+  const districtCode = resolveDistrictCode(districtOrCentreId);
+  if (!districtCode) {
+    const err = new Error("Invalid district. Must be Thanjavur, Villupuram, or Cuddalore.");
+    err.status = 400;
+    throw err;
+  }
+
+  const currentCount = farmerIdCounters[districtCode] || 0;
+  if (currentCount >= 999999) {
+    const err = new Error(`Farmer ID capacity reached for district ${districtCode} (maximum 999,999).`);
+    err.status = 400;
+    err.isCapacityReached = true;
+    throw err;
+  }
+
+  const nextSeq = currentCount + 1;
+  farmerIdCounters[districtCode] = nextSeq;
+  const farmerId = `${districtCode}-F-${String(nextSeq).padStart(6, "0")}`;
+  scheduleSave();
+  return farmerId;
+}
+
+function migrateExistingFarmerIds() {
+  let modified = false;
+
+  // Step 1: Scan all farmers and update farmerIdCounters for any already valid Farmer IDs
+  for (const f of farmers) {
+    if (f.farmerId && typeof f.farmerId === "string") {
+      const match = f.farmerId.trim().match(/^(THJ|VPM|CDL)-F-(\d{6})$/);
+      if (match) {
+        const dCode = match[1];
+        const num = parseInt(match[2], 10);
+        if (num > (farmerIdCounters[dCode] || 0)) {
+          farmerIdCounters[dCode] = num;
+        }
+      }
+    }
+  }
+
+  // Step 2: Group farmers by persistent account key (phone || email || id)
+  const accountGroups = new Map();
+  for (const f of farmers) {
+    const key = f.phone ? String(f.phone).trim() : (f.email ? String(f.email).trim().toLowerCase() : f.id);
+    if (!accountGroups.has(key)) {
+      accountGroups.set(key, []);
+    }
+    accountGroups.get(key).push(f);
+  }
+
+  // Step 3: For each account, ensure a single valid Farmer ID is assigned
+  for (const [key, records] of accountGroups.entries()) {
+    // Check if any record already has a valid format ID
+    let existingValidId = null;
+    let registeredDistrict = null;
+    let registeredDistrictCode = null;
+
+    for (const r of records) {
+      if (r.farmerId && /^(THJ|VPM|CDL)-F-\d{6}$/.test(r.farmerId.trim())) {
+        existingValidId = r.farmerId.trim();
+        registeredDistrictCode = existingValidId.split("-")[0];
+        registeredDistrict = resolveDistrictName(registeredDistrictCode);
+        break;
+      }
+    }
+
+    if (!existingValidId) {
+      // Determine district from earliest record
+      const sortedRecords = [...records].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+      const earliest = sortedRecords[0];
+      const dCode = resolveDistrictCode(earliest.centreId || earliest.district);
+      if (!dCode) {
+        continue;
+      }
+      registeredDistrictCode = dCode;
+      registeredDistrict = resolveDistrictName(dCode);
+
+      // Increment sequence counter
+      const curCount = farmerIdCounters[dCode] || 0;
+      const nextSeq = curCount + 1;
+      farmerIdCounters[dCode] = nextSeq;
+      existingValidId = `${dCode}-F-${String(nextSeq).padStart(6, "0")}`;
+      modified = true;
+    }
+
+    // Apply to all records of this farmer in `farmers`
+    for (const r of records) {
+      if (r.farmerId !== existingValidId || r.district !== registeredDistrict || r.districtCode !== registeredDistrictCode) {
+        r.farmerId = existingValidId;
+        r.district = registeredDistrict;
+        r.districtCode = registeredDistrictCode;
+        modified = true;
+      }
+    }
+
+    // Also link to procurementHistoryRecords for this farmer
+    for (const p of procurementHistoryRecords) {
+      const pKey = p.phone ? String(p.phone).trim() : (p.email ? String(p.email).trim().toLowerCase() : null);
+      const tokenMatch = records.some((r) => r.id === p.tokenId);
+      if ((pKey && pKey === key) || tokenMatch) {
+        if (p.farmerId !== existingValidId) {
+          p.farmerId = existingValidId;
+          modified = true;
+        }
+      }
+    }
+  }
+
+  return modified;
+}
+
+function syncRegisteredFarmersFromRecords() {
+  let added = false;
+  const existingMap = new Map();
+
+  for (const rf of registeredFarmers) {
+    if (rf.phone) existingMap.set(`p:${String(rf.phone).trim()}`, rf);
+    if (rf.email) existingMap.set(`e:${String(rf.email).trim().toLowerCase()}`, rf);
+    if (rf.farmerId) existingMap.set(`id:${String(rf.farmerId).trim().toUpperCase()}`, rf);
+  }
+
+  // Scan farmers collection
+  for (const f of farmers) {
+    const pKey = f.phone ? `p:${String(f.phone).trim()}` : null;
+    const eKey = f.email ? `e:${String(f.email).trim().toLowerCase()}` : null;
+    const idKey = f.farmerId ? `id:${String(f.farmerId).trim().toUpperCase()}` : null;
+
+    if ((pKey && existingMap.has(pKey)) || (eKey && existingMap.has(eKey)) || (idKey && existingMap.has(idKey))) {
+      continue;
+    }
+
+    if (f.farmerId && /^(THJ|VPM|CDL)-F-\d{6}$/.test(f.farmerId.trim())) {
+      const dCode = f.districtCode || f.farmerId.trim().split("-")[0];
+      const dName = f.district || resolveDistrictName(dCode);
+      const newFarmer = {
+        farmerId: f.farmerId.trim(),
+        district: dName,
+        districtCode: dCode,
+        name: f.name ? String(f.name).trim() : "Farmer",
+        phone: f.phone ? String(f.phone).trim() : null,
+        email: f.email ? String(f.email).trim().toLowerCase() : null,
+        primaryCrop: f.crop || "Paddy",
+        preferredCentreId: f.centreId || null,
+        registeredAt: f.createdAt ? new Date(f.createdAt).toISOString() : new Date().toISOString(),
+        createdAt: f.createdAt || Date.now(),
+      };
+      registeredFarmers.push(newFarmer);
+      if (newFarmer.phone) existingMap.set(`p:${newFarmer.phone}`, newFarmer);
+      if (newFarmer.email) existingMap.set(`e:${newFarmer.email}`, newFarmer);
+      if (newFarmer.farmerId) existingMap.set(`id:${newFarmer.farmerId.toUpperCase()}`, newFarmer);
+      added = true;
+    }
+  }
+
+  // Scan procurementHistoryRecords collection
+  for (const p of procurementHistoryRecords) {
+    const pKey = p.phone ? `p:${String(p.phone).trim()}` : null;
+    const eKey = p.email ? `e:${String(p.email).trim().toLowerCase()}` : null;
+    const idKey = p.farmerId ? `id:${String(p.farmerId).trim().toUpperCase()}` : null;
+
+    if ((pKey && existingMap.has(pKey)) || (eKey && existingMap.has(eKey)) || (idKey && existingMap.has(idKey))) {
+      continue;
+    }
+
+    if (p.farmerId && /^(THJ|VPM|CDL)-F-\d{6}$/.test(p.farmerId.trim())) {
+      const dCode = p.farmerId.trim().split("-")[0];
+      const dName = resolveDistrictName(dCode);
+      const newFarmer = {
+        farmerId: p.farmerId.trim(),
+        district: dName,
+        districtCode: dCode,
+        name: p.farmerName ? String(p.farmerName).trim() : "Farmer",
+        phone: p.phone ? String(p.phone).trim() : null,
+        email: p.email ? String(p.email).trim().toLowerCase() : null,
+        primaryCrop: p.crop || "Paddy",
+        preferredCentreId: p.centreId || null,
+        registeredAt: p.procurementDate || new Date().toISOString(),
+        createdAt: p.paymentTimestamp || Date.now(),
+      };
+      registeredFarmers.push(newFarmer);
+      if (newFarmer.phone) existingMap.set(`p:${newFarmer.phone}`, newFarmer);
+      if (newFarmer.email) existingMap.set(`e:${newFarmer.email}`, newFarmer);
+      if (newFarmer.farmerId) existingMap.set(`id:${newFarmer.farmerId.toUpperCase()}`, newFarmer);
+      added = true;
+    }
+  }
+
+  return added;
+}
+
 function saveToDisk() {
   try {
     const data = {
       farmers,
+      registeredFarmers,
+      registeredAdmins,
       centreCounters,
+      farmerIdCounters,
+      adminIdCounters,
       tickets,
       ticketCounter,
       swapRequests,
@@ -86,6 +346,34 @@ function saveImmediately() {
   saveToDisk();
 }
 
+export function syncAdminIdCounters() {
+  if (!Array.isArray(registeredAdmins)) return;
+  for (const admin of registeredAdmins) {
+    if (!admin || !admin.adminId) continue;
+    // Match Phase 2 format: DISTRICT_CODE-CA-XXXDOB_YEAR (e.g. VPM-CA-0012001)
+    const match = String(admin.adminId).match(/^([A-Z]{3})-CA-(\d{3})(\d{4})$/);
+    if (match) {
+      const distCode = match[1];
+      const seq = parseInt(match[2], 10);
+      let regYear = null;
+      if (admin.registeredAt) {
+        const d = new Date(admin.registeredAt);
+        if (!isNaN(d.getTime())) regYear = d.getFullYear();
+      } else if (admin.createdAt) {
+        const d = new Date(admin.createdAt);
+        if (!isNaN(d.getTime())) regYear = d.getFullYear();
+      }
+      if (!regYear) {
+        regYear = new Date().getFullYear();
+      }
+      const key = `${distCode}_${regYear}`;
+      if (!adminIdCounters[key] || Number(adminIdCounters[key]) < seq) {
+        adminIdCounters[key] = seq;
+      }
+    }
+  }
+}
+
 function loadPersistedData() {
   try {
     if (fs.existsSync(PERSISTENCE_FILE)) {
@@ -95,9 +383,35 @@ function loadPersistedData() {
         if (Array.isArray(parsed.farmers)) {
           farmers = parsed.farmers;
         }
+        if (Array.isArray(parsed.registeredFarmers)) {
+          registeredFarmers = parsed.registeredFarmers;
+        }
+        if (Array.isArray(parsed.registeredAdmins)) {
+          registeredAdmins = parsed.registeredAdmins.map((a) => ({
+            ...a,
+            procurementsHandled: Array.isArray(a.procurementsHandled) ? a.procurementsHandled : [],
+          }));
+        }
         if (parsed.centreCounters && typeof parsed.centreCounters === "object") {
           centreCounters = parsed.centreCounters;
         }
+        if (parsed.farmerIdCounters && typeof parsed.farmerIdCounters === "object") {
+          farmerIdCounters = {
+            THJ: Number(parsed.farmerIdCounters.THJ) || 0,
+            VPM: Number(parsed.farmerIdCounters.VPM) || 0,
+            CDL: Number(parsed.farmerIdCounters.CDL) || 0,
+          };
+        }
+        if (parsed.adminIdCounters && typeof parsed.adminIdCounters === "object") {
+          adminIdCounters = {
+            THJ: Number(parsed.adminIdCounters.THJ) || 0,
+            VPM: Number(parsed.adminIdCounters.VPM) || 0,
+            CDL: Number(parsed.adminIdCounters.CDL) || 0,
+            ADM: Number(parsed.adminIdCounters.ADM) || 0,
+            ...parsed.adminIdCounters,
+          };
+        }
+        syncAdminIdCounters();
         if (Array.isArray(parsed.tickets)) {
           tickets = parsed.tickets;
         }
@@ -119,7 +433,15 @@ function loadPersistedData() {
         if (Array.isArray(parsed.procurementHistoryRecords)) {
           procurementHistoryRecords = parsed.procurementHistoryRecords;
         }
-        console.log(`[Store Persistence] Successfully restored ${farmers.length} farmers, ${tickets.length} tickets, ${swapRequests.length} swap requests, and ${procurementHistoryRecords.length} procurement history records from persisted-store.json`);
+
+        const migrated = migrateExistingFarmerIds();
+        const synced = syncRegisteredFarmersFromRecords();
+        if (migrated || synced) {
+          console.log(`[Store Persistence] Migrated/synced farmers into registered accounts (THJ: ${farmerIdCounters.THJ}, VPM: ${farmerIdCounters.VPM}, CDL: ${farmerIdCounters.CDL}, registered: ${registeredFarmers.length})`);
+          saveImmediately();
+        }
+
+        console.log(`[Store Persistence] Successfully restored ${farmers.length} farmers, ${registeredFarmers.length} registered accounts, ${tickets.length} tickets, ${swapRequests.length} swap requests, and ${procurementHistoryRecords.length} procurement history records from persisted-store.json`);
         return;
       }
     }
@@ -946,13 +1268,19 @@ export function computeSlotStatus(farmer) {
 }
 
 function getDailyLiveQueue(centreId) {
+  const todayStr = getTodayDateString();
   const live = farmers
     .filter(
       (f) =>
         f.centreId === centreId &&
-        f.status !== STATUS.PAID &&
         f.status !== STATUS.CANCELLED &&
-        (f.queueType === "live" || !f.slotTime)
+        (f.queueType === "live" || !f.slotTime) &&
+        (
+          f.status !== STATUS.PAID ||
+          f.receipt?.receiptStatus !== "released" ||
+          (f.stageChangedAt && new Date(f.stageChangedAt).toISOString().split("T")[0] === todayStr) ||
+          (f.createdAt && new Date(f.createdAt).toISOString().split("T")[0] === todayStr)
+        )
     )
     .sort((a, b) => a.createdAt - b.createdAt);
 
@@ -961,7 +1289,7 @@ function getDailyLiveQueue(centreId) {
   return live.map((f, idx) => ({
     ...f,
     position: idx + 1,
-    estimatedWaitMinutes: Math.max(1, Math.round(idx * liveAvg)),
+    estimatedWaitMinutes: f.status === STATUS.PAID ? 0 : Math.max(1, Math.round(idx * liveAvg)),
   }));
 }
 
@@ -1081,8 +1409,95 @@ export function registerFarmer({
   const numQty = Number(rawQty) || 0;
   const computedKg = convertQuantityToKg(numQty, chosenUnit, crop);
 
+  // Resolve or generate persistent Farmer ID
+  const cleanPhone = phone ? normalizeIndianMobile(phone) || String(phone).trim() : null;
+  const cleanEmail = email ? String(email).trim().toLowerCase() : null;
+
+  let existingFarmerId = null;
+  let farmerDistrict = null;
+  let farmerDistrictCode = null;
+
+  if (cleanPhone || cleanEmail) {
+    const regFarmer = registeredFarmers.find((rf) => {
+      const pMatch = cleanPhone && rf.phone && (String(rf.phone).trim() === cleanPhone || normalizeIndianMobile(rf.phone) === cleanPhone);
+      const eMatch = cleanEmail && rf.email && String(rf.email).trim().toLowerCase() === cleanEmail;
+      return pMatch || eMatch;
+    });
+
+    if (regFarmer && regFarmer.farmerId && /^(THJ|VPM|CDL)-F-\d{6}$/.test(regFarmer.farmerId.trim())) {
+      existingFarmerId = regFarmer.farmerId.trim();
+      farmerDistrictCode = regFarmer.districtCode || existingFarmerId.split("-")[0];
+      farmerDistrict = regFarmer.district || resolveDistrictName(farmerDistrictCode);
+    }
+  }
+
+  if (!existingFarmerId && (cleanPhone || cleanEmail)) {
+    const existingRecords = farmers.filter((f) => {
+      const pMatch = cleanPhone && f.phone && String(f.phone).trim() === cleanPhone;
+      const eMatch = cleanEmail && f.email && String(f.email).trim().toLowerCase() === cleanEmail;
+      return pMatch || eMatch;
+    });
+
+    for (const r of existingRecords) {
+      if (r.farmerId && /^(THJ|VPM|CDL)-F-\d{6}$/.test(r.farmerId.trim())) {
+        existingFarmerId = r.farmerId.trim();
+        farmerDistrictCode = r.districtCode || existingFarmerId.split("-")[0];
+        farmerDistrict = r.district || resolveDistrictName(farmerDistrictCode);
+        break;
+      }
+    }
+  }
+
+  // If no existing valid Farmer ID, generate a new one based on selected centre's district
+  if (!existingFarmerId) {
+    const centre = getCentre(centreId);
+    farmerDistrictCode = resolveDistrictCode(centreId || centre?.district);
+    if (!farmerDistrictCode) {
+      const err = new Error("Invalid centre or district for Farmer ID generation");
+      err.status = 400;
+      throw err;
+    }
+    farmerDistrict = resolveDistrictName(farmerDistrictCode);
+    existingFarmerId = generateFarmerId(farmerDistrictCode);
+
+    // Sync newly generated farmer into registeredFarmers
+    if (cleanPhone || cleanEmail) {
+      const existingReg = registeredFarmers.find((rf) => {
+        const pMatch = cleanPhone && rf.phone && String(rf.phone).trim() === cleanPhone;
+        const eMatch = cleanEmail && rf.email && String(rf.email).trim().toLowerCase() === cleanEmail;
+        return pMatch || eMatch;
+      });
+
+      if (existingReg) {
+        existingReg.farmerId = existingFarmerId;
+        existingReg.district = farmerDistrict;
+        existingReg.districtCode = farmerDistrictCode;
+        if (!existingReg.preferredCentreId) existingReg.preferredCentreId = centreId;
+        if (!existingReg.primaryCrop) existingReg.primaryCrop = crop;
+        scheduleSave();
+      } else {
+        registeredFarmers.push({
+          farmerId: existingFarmerId,
+          district: farmerDistrict,
+          districtCode: farmerDistrictCode,
+          name: name ? String(name).trim() : "Farmer",
+          phone: cleanPhone,
+          email: cleanEmail,
+          primaryCrop: crop || "Paddy",
+          preferredCentreId: centreId || null,
+          registeredAt: new Date().toISOString(),
+          createdAt: Date.now(),
+        });
+        scheduleSave();
+      }
+    }
+  }
+
   const farmer = {
     id: nextId(centreId),
+    farmerId: existingFarmerId,
+    district: farmerDistrict,
+    districtCode: farmerDistrictCode,
     name,
     phone,
     email: email ? String(email).trim() : null,
@@ -1112,6 +1527,20 @@ export function registerFarmer({
     checkedInAt: isLive ? now : null,
   };
   farmers.push(farmer);
+
+  // Link any previous unlinked records for this farmer account
+  if (cleanPhone || cleanEmail) {
+    for (const r of farmers) {
+      const pMatch = cleanPhone && r.phone && String(r.phone).trim() === cleanPhone;
+      const eMatch = cleanEmail && r.email && String(r.email).trim().toLowerCase() === cleanEmail;
+      if ((pMatch || eMatch) && (!r.farmerId || r.farmerId !== existingFarmerId)) {
+        r.farmerId = existingFarmerId;
+        r.district = farmerDistrict;
+        r.districtCode = farmerDistrictCode;
+      }
+    }
+  }
+
   scheduleSave();
   return farmer;
 }
@@ -1182,6 +1611,56 @@ function verifyAndAdvanceFarmer(id, { verifiedQuantity, verifiedUnit, varietySel
     farmer.procuredAt = now;
   }
 
+  // Calculate rate and amount upon produce verification
+  const calcResult = calculateRateAndTotal({
+    crop: farmer.crop,
+    variety: farmer.variety,
+    quantityKg: verifiedQuantityKg,
+  });
+
+  farmer.ratePerKg = calcResult.ratePerKg;
+  farmer.ratePerQuintal = calcResult.ratePerQuintal;
+  farmer.baseMspPerQuintal = calcResult.baseMspPerQuintal;
+  farmer.stateIncentivePerQuintal = calcResult.stateIncentivePerQuintal;
+  farmer.quintals = calcResult.quintals;
+  farmer.totalAmount = calcResult.totalAmount;
+
+  const centre = getCentre(farmer.centreId);
+  const currentReceiptStatus = farmer.receipt?.receiptStatus || "pending_release";
+
+  farmer.receipt = {
+    receiptId: farmer.receipt?.receiptId || `RCPT-${farmer.id}`,
+    receiptStatus: currentReceiptStatus,
+    crop: farmer.crop,
+    variety: calcResult.variety,
+    declaredQuantity: farmer.declaredQuantity !== undefined ? farmer.declaredQuantity : null,
+    declaredUnit: farmer.declaredUnit || "bags",
+    declaredQuantityKg: declaredKg,
+    verifiedQuantity: verifiedQtyNum,
+    verifiedUnit: unit,
+    verifiedQuantityKg: verifiedQuantityKg,
+    hasDiscrepancy: diffKg > 0.01,
+    discrepancyPercent: roundedDiffPercent,
+    discrepancyReason: farmer.quantityDiscrepancyReason || null,
+    verifiedBy: farmer.verifiedBy || "Centre Admin",
+    verifiedAt: now,
+    quantityKg: verifiedQuantityKg,
+    quintals: calcResult.quintals,
+    ratePerKg: calcResult.ratePerKg,
+    ratePerQuintal: calcResult.ratePerQuintal,
+    baseMspPerQuintal: calcResult.baseMspPerQuintal,
+    stateIncentivePerQuintal: calcResult.stateIncentivePerQuintal,
+    totalAmount: calcResult.totalAmount,
+    date: farmer.receipt?.date || new Date().toISOString().split("T")[0],
+    farmerName: farmer.name,
+    centreName: centre?.name || farmer.centreId,
+    releasedAt: farmer.receipt?.releasedAt,
+    processCompletedAt: farmer.receipt?.processCompletedAt,
+    releasedBy: farmer.receipt?.releasedBy,
+    completedByAdminId: farmer.completedByAdminId || farmer.receipt?.completedByAdminId,
+  };
+  farmer.receiptStatus = currentReceiptStatus;
+
   scheduleSave();
   return {
     farmer,
@@ -1199,6 +1678,28 @@ function createProcurementHistorySnapshot(farmer, save = true) {
     (r) => r.tokenId === farmer.id || (farmer.receipt && r.receiptId === farmer.receipt.receiptId)
   );
   if (existing) {
+    if (farmer.completedByAdminId && !existing.completedByAdminId) {
+      existing.completedByAdminId = farmer.completedByAdminId;
+    }
+    if (farmer.receipt) {
+      existing.receipt = JSON.parse(JSON.stringify(farmer.receipt));
+      if (farmer.receipt.receiptStatus) {
+        existing.receiptStatus = farmer.receipt.receiptStatus;
+      }
+      if (farmer.receipt.processCompletedAt) {
+        existing.processCompletedAt = farmer.receipt.processCompletedAt;
+      }
+      if (farmer.receipt.releasedAt) {
+        existing.releasedAt = farmer.receipt.releasedAt;
+      }
+      if (farmer.receipt.adjustmentReason) {
+        existing.adjustmentReason = farmer.receipt.adjustmentReason;
+      }
+    }
+    if (farmer.adjustmentReason && !existing.adjustmentReason) {
+      existing.adjustmentReason = farmer.adjustmentReason;
+    }
+    if (save) scheduleSave();
     return existing;
   }
 
@@ -1241,6 +1742,7 @@ function createProcurementHistorySnapshot(farmer, save = true) {
     farmerName: String(farmer.name || ""),
     phone: farmer.phone ? String(farmer.phone).trim() : null,
     email: farmer.email ? String(farmer.email).trim() : null,
+    completedByAdminId: farmer.completedByAdminId || receipt.completedByAdminId || null,
     acreage: farmer.acreage !== undefined && farmer.acreage !== null ? Number(farmer.acreage) : null,
     crop: String(farmer.crop || receipt.crop || ""),
     variety: String(receipt.variety || farmer.variety || "Common"),
@@ -1271,6 +1773,7 @@ function createProcurementHistorySnapshot(farmer, save = true) {
     slotDate: farmer.slotDate || null,
     slotTime: farmer.slotTime || null,
     receiptId: String(receipt.receiptId || `RCPT-${farmer.id}`),
+    adjustmentReason: receipt.adjustmentReason || farmer.adjustmentReason || null,
     receipt: receipt ? JSON.parse(JSON.stringify(receipt)) : null,
     createdAt: nowIso,
   };
@@ -1310,8 +1813,11 @@ function getFarmerProcurementSummary(identifier) {
   }, 0);
 
   return {
+    identifier,
     totalTransactions,
     totalQuantitySoldKg: Math.round(totalQuantitySoldKg * 100) / 100,
+    totalQuantitySoldQuintals: Number((totalQuantitySoldKg / 100).toFixed(2)),
+    totalEarnings: Math.round(totalAmountEarned * 100) / 100,
     totalAmountEarned: Math.round(totalAmountEarned * 100) / 100,
     history,
   };
@@ -1323,12 +1829,20 @@ function getFarmerProfile(identifier, fallbackName = null) {
   const farmerRecords = getFarmersByIdentifier(cleanId);
   const summary = getFarmerProcurementSummary(cleanId);
 
+  // Check registeredFarmers
+  const regFarmer = registeredFarmers.find((rf) => {
+    const pMatch = rf.phone && String(rf.phone).trim().toLowerCase() === cleanId.toLowerCase();
+    const eMatch = rf.email && String(rf.email).trim().toLowerCase() === cleanId.toLowerCase();
+    const idMatch = rf.farmerId && rf.farmerId.trim().toUpperCase() === cleanId.toUpperCase();
+    return pMatch || eMatch || idMatch;
+  });
+
   // Determine farmer details
-  let name = fallbackName || "Farmer";
-  let phone = null;
-  let email = null;
-  let memberSince = null;
-  let loginMethod = cleanId.includes("@") ? "google" : "phone";
+  let name = regFarmer?.name || fallbackName || "Farmer";
+  let phone = regFarmer?.phone || null;
+  let email = regFarmer?.email || null;
+  let memberSince = regFarmer?.registeredAt || null;
+  let loginMethod = email || cleanId.includes("@") ? "google" : "phone";
 
   if (farmerRecords.length > 0) {
     const sortedByCreated = [...farmerRecords].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
@@ -1336,30 +1850,41 @@ function getFarmerProfile(identifier, fallbackName = null) {
     const latest = sortedByCreated[sortedByCreated.length - 1];
 
     name = latest.name || earliest.name || name;
-    phone = farmerRecords.find((f) => f.phone)?.phone || (cleanId.includes("@") ? null : cleanId);
-    email = farmerRecords.find((f) => f.email)?.email || (cleanId.includes("@") ? cleanId : null);
+    phone = phone || farmerRecords.find((f) => f.phone)?.phone || (cleanId.includes("@") ? null : cleanId);
+    email = email || farmerRecords.find((f) => f.email)?.email || (cleanId.includes("@") ? cleanId : null);
     if (farmerRecords.some((f) => f.email) || cleanId.includes("@")) {
       loginMethod = "google";
     }
-    memberSince = earliest.createdAt ? new Date(earliest.createdAt).toISOString() : new Date().toISOString();
+    if (!memberSince) {
+      memberSince = earliest.createdAt ? new Date(earliest.createdAt).toISOString() : new Date().toISOString();
+    }
   } else if (summary.history && summary.history.length > 0) {
     const earliestHistory = [...summary.history].sort((a, b) => (a.paymentTimestamp || 0) - (b.paymentTimestamp || 0))[0];
     name = earliestHistory.farmerName || name;
-    phone = summary.history.find((f) => f.phone)?.phone || (cleanId.includes("@") ? null : cleanId);
-    email = summary.history.find((f) => f.email)?.email || (cleanId.includes("@") ? cleanId : null);
+    phone = phone || summary.history.find((f) => f.phone)?.phone || (cleanId.includes("@") ? null : cleanId);
+    email = email || summary.history.find((f) => f.email)?.email || (cleanId.includes("@") ? cleanId : null);
     if (cleanId.includes("@") || email) {
       loginMethod = "google";
     }
-    memberSince = earliestHistory.procurementDate || earliestHistory.paymentDate || earliestHistory.createdAt || new Date().toISOString();
+    if (!memberSince) {
+      memberSince = earliestHistory.procurementDate || earliestHistory.paymentDate || earliestHistory.createdAt || new Date().toISOString();
+    }
   } else {
     if (cleanId.includes("@")) {
-      email = cleanId;
+      email = email || cleanId;
       loginMethod = "google";
+    } else if (cleanId.includes("-F-")) {
+      // cleanId is an official district Farmer ID (e.g. THJ-F-000098)
+      // preserve phone and email loaded from registered farmer record
+      if (email) loginMethod = "google";
+      else loginMethod = "phone";
     } else {
-      phone = cleanId;
+      phone = phone || cleanId;
       loginMethod = "phone";
     }
-    memberSince = new Date().toISOString();
+    if (!memberSince) {
+      memberSince = new Date().toISOString();
+    }
   }
 
   // Active token lookup: token with status other than paid or cancelled
@@ -1385,17 +1910,372 @@ function getFarmerProfile(identifier, fallbackName = null) {
     };
   }
 
+  // Farmer ID and district resolution
+  let farmerId = regFarmer?.farmerId || null;
+  let district = regFarmer?.district || null;
+  let districtCode = regFarmer?.districtCode || null;
+
+  if (!farmerId) {
+    const validFarmerRec = farmerRecords.find((f) => f.farmerId && /^(THJ|VPM|CDL)-F-\d{6}$/.test(f.farmerId));
+    if (validFarmerRec) {
+      farmerId = validFarmerRec.farmerId;
+      district = validFarmerRec.district || resolveDistrictName(validFarmerRec.districtCode || validFarmerRec.farmerId.split("-")[0]);
+      districtCode = validFarmerRec.districtCode || validFarmerRec.farmerId.split("-")[0];
+    } else if (summary.history && summary.history.length > 0) {
+      const validHistoryRec = summary.history.find((r) => r.farmerId && /^(THJ|VPM|CDL)-F-\d{6}$/.test(r.farmerId));
+      if (validHistoryRec) {
+        farmerId = validHistoryRec.farmerId;
+        districtCode = validHistoryRec.farmerId.split("-")[0];
+        district = resolveDistrictName(districtCode);
+      }
+    }
+  }
+
+  const preferredCentre = regFarmer?.preferredCentreId ? getCentre(regFarmer.preferredCentreId) : null;
+
   return {
     name,
     identifier: phone || email || cleanId,
+    farmerId,
+    district,
+    districtCode,
     phone,
+    alternatePhone: regFarmer?.alternatePhone || null,
     email,
     loginMethod,
     memberSince,
+    area: regFarmer?.area || regFarmer?.village || null,
+    village: regFarmer?.village || regFarmer?.area || null,
+    crops: regFarmer?.crops || (regFarmer?.primaryCrop ? [regFarmer.primaryCrop] : (farmerRecords[0]?.crop ? [farmerRecords[0].crop] : [])),
+    primaryCrop: regFarmer?.primaryCrop || (regFarmer?.crops && regFarmer.crops[0]) || (farmerRecords[0]?.crop) || null,
+    preferredCentreId: regFarmer?.preferredCentreId || (farmerRecords[0]?.centreId) || null,
+    preferredCentre: regFarmer?.preferredCentreId || (farmerRecords[0]?.centreId) || null,
+    preferredCentreName: preferredCentre ? preferredCentre.name : (regFarmer?.preferredCentreName || null),
     totalTransactions: summary.totalTransactions,
     totalQuantitySoldKg: summary.totalQuantitySoldKg,
     totalAmountEarned: summary.totalAmountEarned,
     activeToken,
+  };
+}
+
+export function allRegisteredFarmers() {
+  return [...registeredFarmers];
+}
+
+export function findRegisteredFarmer({ phone, email, name, farmerId } = {}) {
+  const normalizedPhone = phone ? normalizeIndianMobile(phone) : null;
+  const rawPhone = phone ? String(phone).trim() : null;
+  const cleanEmail = email ? String(email).trim().toLowerCase() : null;
+  const cleanId = farmerId ? String(farmerId).trim().toUpperCase() : null;
+
+  let found = registeredFarmers.find((rf) => {
+    if (cleanId && rf.farmerId && rf.farmerId.trim().toUpperCase() === cleanId) return true;
+    if (normalizedPhone && rf.phone && (String(rf.phone).trim() === normalizedPhone || normalizeIndianMobile(rf.phone) === normalizedPhone)) return true;
+    if (rawPhone && rf.phone && String(rf.phone).trim() === rawPhone) return true;
+    if (cleanEmail && rf.email && String(rf.email).trim().toLowerCase() === cleanEmail) return true;
+    return false;
+  });
+
+  if (found) return found;
+
+  // Check legacy records in farmers
+  const identifier = normalizedPhone || rawPhone || cleanEmail || cleanId;
+  if (identifier) {
+    const existing = getFarmersByIdentifier(identifier);
+    if (existing.length > 0) {
+      const rec = existing[0];
+      const dCode = rec.districtCode || (rec.farmerId ? rec.farmerId.split("-")[0] : resolveDistrictCode(rec.centreId || rec.district));
+      const dName = rec.district || resolveDistrictName(dCode);
+      const fId = rec.farmerId || (dCode ? generateFarmerId(dCode) : null);
+      if (fId) {
+        const enrolled = {
+          farmerId: fId,
+          district: dName,
+          districtCode: dCode,
+          name: rec.name ? String(rec.name).trim() : (name || "Farmer"),
+          phone: rec.phone ? String(rec.phone).trim() : cleanPhone,
+          email: rec.email ? String(rec.email).trim().toLowerCase() : cleanEmail,
+          primaryCrop: rec.crop || "Paddy",
+          preferredCentreId: rec.centreId || null,
+          registeredAt: rec.createdAt ? new Date(rec.createdAt).toISOString() : new Date().toISOString(),
+          createdAt: rec.createdAt || Date.now(),
+        };
+        registeredFarmers.push(enrolled);
+        scheduleSave();
+        return enrolled;
+      }
+    }
+  }
+
+  return null;
+}
+
+export function registerFarmerAccount({
+  name,
+  phone,
+  alternatePhone,
+  email,
+  district,
+  area,
+  village,
+  crops,
+  primaryCrop,
+  preferredCentreId,
+  preferredCentre,
+}) {
+  if (!name || typeof name !== "string" || !name.trim()) {
+    const err = new Error("Full name is required.");
+    err.status = 400;
+    throw err;
+  }
+
+  // Primary mobile validation (mandatory)
+  if (!phone) {
+    const err = new Error("Primary mobile number is required.");
+    err.status = 400;
+    throw err;
+  }
+  const phoneValidation = validateIndianMobile(phone);
+  if (!phoneValidation.isValid) {
+    const err = new Error(phoneValidation.error || INDIAN_MOBILE_ERROR_MSG);
+    err.status = 400;
+    throw err;
+  }
+  const cleanPhone = phoneValidation.normalized;
+
+  // Alternate mobile validation (optional)
+  let cleanAlternatePhone = null;
+  if (alternatePhone && String(alternatePhone).trim()) {
+    const altValidation = validateIndianMobile(alternatePhone);
+    if (!altValidation.isValid) {
+      const err = new Error(`Alternate phone: ${altValidation.error || INDIAN_MOBILE_ERROR_MSG}`);
+      err.status = 400;
+      throw err;
+    }
+    cleanAlternatePhone = altValidation.normalized;
+    if (cleanAlternatePhone === cleanPhone) {
+      const err = new Error("Alternate mobile number must be different from primary mobile number.");
+      err.status = 400;
+      throw err;
+    }
+  }
+
+  const cleanEmail = email ? String(email).trim().toLowerCase() : null;
+
+  // District validation (mandatory)
+  if (!district || !String(district).trim()) {
+    const err = new Error("District is mandatory. Please select Thanjavur, Villupuram, or Cuddalore.");
+    err.status = 400;
+    throw err;
+  }
+  const districtCode = resolveDistrictCode(district);
+  if (!districtCode) {
+    const err = new Error("Invalid district. Please select Thanjavur, Villupuram, or Cuddalore.");
+    err.status = 400;
+    throw err;
+  }
+  const districtName = resolveDistrictName(districtCode);
+
+  // Crop selection validation: 1, 2, or max 3 crops
+  let validatedCrops = [];
+  if (Array.isArray(crops)) {
+    validatedCrops = crops.map((c) => String(c).trim()).filter(Boolean);
+  } else if (typeof crops === "string" && crops.trim()) {
+    validatedCrops = [crops.trim()];
+  } else if (primaryCrop && String(primaryCrop).trim()) {
+    validatedCrops = [String(primaryCrop).trim()];
+  }
+
+  if (validatedCrops.length === 0 || validatedCrops.length > 3) {
+    const err = new Error("Please select between 1 and 3 crops.");
+    err.status = 400;
+    throw err;
+  }
+
+  // Deduplicate crops preserving selection order
+  validatedCrops = [...new Set(validatedCrops)];
+
+  // Preferred Procurement Centre (optional)
+  let cleanCentreId = null;
+  let cleanCentreName = null;
+  const targetCentreInput = preferredCentreId || preferredCentre;
+  if (targetCentreInput && String(targetCentreInput).trim()) {
+    const targetCentre = getCentre(targetCentreInput);
+    if (targetCentre) {
+      cleanCentreId = targetCentre.id;
+      cleanCentreName = targetCentre.name;
+    }
+  }
+
+  // Duplicate checks
+  if (cleanPhone) {
+    const existing = registeredFarmers.find((rf) => rf.phone && (String(rf.phone).trim() === cleanPhone || normalizeIndianMobile(rf.phone) === cleanPhone));
+    if (existing) {
+      const err = new Error(
+        `A farmer account is already registered with mobile number ${cleanPhone}.${existing.farmerId ? ` Farmer ID: ${existing.farmerId}.` : ""} Please login instead.`
+      );
+      err.status = 409;
+      err.code = "ALREADY_REGISTERED";
+      err.existingFarmerId = existing.farmerId || null;
+      throw err;
+    }
+  }
+
+  if (cleanEmail) {
+    const existing = registeredFarmers.find((rf) => rf.email && String(rf.email).trim().toLowerCase() === cleanEmail);
+    if (existing) {
+      const err = new Error(
+        `A farmer account is already registered with email ${cleanEmail}.${existing.farmerId ? ` Farmer ID: ${existing.farmerId}.` : ""} Please login instead.`
+      );
+      err.status = 409;
+      err.code = "ALREADY_REGISTERED";
+      err.existingFarmerId = existing.farmerId || null;
+      throw err;
+    }
+  }
+
+  // Generate official district Farmer ID using existing Farmer ID generator
+  const farmerId = generateFarmerId(districtCode);
+
+  const newAccount = {
+    farmerId,
+    district: districtName,
+    districtCode,
+    name: name.trim(),
+    phone: cleanPhone,
+    alternatePhone: cleanAlternatePhone,
+    email: cleanEmail,
+    area: area ? String(area).trim() : (village ? String(village).trim() : null),
+    village: village ? String(village).trim() : (area ? String(area).trim() : null),
+    crops: validatedCrops,
+    primaryCrop: validatedCrops[0] || null,
+    preferredCentreId: cleanCentreId,
+    preferredCentre: cleanCentreId,
+    preferredCentreName: cleanCentreName,
+    registeredAt: new Date().toISOString(),
+    createdAt: Date.now(),
+  };
+
+  registeredFarmers.push(newAccount);
+  saveImmediately();
+
+  return newAccount;
+}
+
+export function authenticateFarmerLogin({ name, phone, email, farmerId, identityType, identityValue } = {}) {
+  const cleanId = farmerId ? String(farmerId).trim().toUpperCase() : null;
+  const cleanEmail = email
+    ? String(email).trim().toLowerCase()
+    : identityType === "google" && identityValue
+    ? String(identityValue).trim().toLowerCase()
+    : null;
+  const normalizedPhone = phone
+    ? normalizeIndianMobile(phone)
+    : identityType === "phone" && identityValue
+    ? normalizeIndianMobile(identityValue)
+    : null;
+  const rawPhone = phone
+    ? String(phone).trim()
+    : identityType === "phone" && identityValue
+    ? String(identityValue).trim()
+    : null;
+
+  const GENERIC_ERROR = "We couldn't find a registered farmer account matching these details.";
+
+  if (!cleanId) {
+    return {
+      authenticated: false,
+      invalidDetails: true,
+      error: GENERIC_ERROR,
+      message: GENERIC_ERROR,
+    };
+  }
+
+  // Pathway A: Google verified identity (email + farmerId)
+  if (cleanEmail) {
+    // Validate both belong to the exact SAME registered farmer
+    const found = registeredFarmers.find((rf) => {
+      const idMatch = rf.farmerId && rf.farmerId.trim().toUpperCase() === cleanId;
+      const emailMatch = rf.email && rf.email.trim().toLowerCase() === cleanEmail;
+      return idMatch && emailMatch;
+    });
+
+    let targetFarmer = found;
+    if (!targetFarmer) {
+      targetFarmer = farmers.find((f) => {
+        const idMatch = f.farmerId && f.farmerId.trim().toUpperCase() === cleanId;
+        const emailMatch = f.email && f.email.trim().toLowerCase() === cleanEmail;
+        return idMatch && emailMatch;
+      });
+    }
+
+    if (!targetFarmer) {
+      return {
+        authenticated: false,
+        invalidDetails: true,
+        error: GENERIC_ERROR,
+        message: GENERIC_ERROR,
+      };
+    }
+
+    const profile = getFarmerProfile(targetFarmer.farmerId, targetFarmer.name);
+    return {
+      authenticated: true,
+      farmer: targetFarmer,
+      profile,
+    };
+  }
+
+  // Pathway B: Phone verified identity (phone + farmerId)
+  if (normalizedPhone || rawPhone) {
+    const targetPhone = normalizedPhone || rawPhone;
+
+    // Validate both belong to the exact SAME registered farmer
+    const found = registeredFarmers.find((rf) => {
+      const idMatch = rf.farmerId && rf.farmerId.trim().toUpperCase() === cleanId;
+      const rfNormalized = rf.phone ? normalizeIndianMobile(rf.phone) : null;
+      const rfRaw = rf.phone ? String(rf.phone).trim() : null;
+      const phoneMatch =
+        (rfNormalized && rfNormalized === targetPhone) ||
+        (rfRaw && (rfRaw === targetPhone || rfRaw === rawPhone));
+      return idMatch && phoneMatch;
+    });
+
+    let targetFarmer = found;
+    if (!targetFarmer) {
+      targetFarmer = farmers.find((f) => {
+        const idMatch = f.farmerId && f.farmerId.trim().toUpperCase() === cleanId;
+        const fNormalized = f.phone ? normalizeIndianMobile(f.phone) : null;
+        const fRaw = f.phone ? String(f.phone).trim() : null;
+        const phoneMatch =
+          (fNormalized && fNormalized === targetPhone) ||
+          (fRaw && (fRaw === targetPhone || fRaw === rawPhone));
+        return idMatch && phoneMatch;
+      });
+    }
+
+    if (!targetFarmer) {
+      return {
+        authenticated: false,
+        invalidDetails: true,
+        error: GENERIC_ERROR,
+        message: GENERIC_ERROR,
+      };
+    }
+
+    const profile = getFarmerProfile(targetFarmer.farmerId, targetFarmer.name);
+    return {
+      authenticated: true,
+      farmer: targetFarmer,
+      profile,
+    };
+  }
+
+  return {
+    authenticated: false,
+    invalidDetails: true,
+    error: GENERIC_ERROR,
+    message: GENERIC_ERROR,
   };
 }
 
@@ -1481,72 +2361,92 @@ function updateFarmerStatus(id, status) {
     farmer.procuredAt = now;
   }
   if (status === STATUS.PAID) {
-    if (!farmer.receipt) {
-      const centre = getCentre(farmer.centreId);
-      const finalKg = (farmer.verifiedQuantityKg !== undefined && farmer.verifiedQuantityKg !== null)
-        ? farmer.verifiedQuantityKg
-        : (farmer.declaredQuantityKg || farmer.quantityKg || 0);
+    const centre = getCentre(farmer.centreId);
+    const finalKg = (farmer.verifiedQuantityKg !== undefined && farmer.verifiedQuantityKg !== null)
+      ? farmer.verifiedQuantityKg
+      : (farmer.declaredQuantityKg || farmer.quantityKg || 0);
 
-      const calcResult = calculateRateAndTotal({
-        crop: farmer.crop,
-        variety: farmer.variety,
-        quantityKg: finalKg,
-      });
+    const calcResult = calculateRateAndTotal({
+      crop: farmer.crop,
+      variety: farmer.variety,
+      quantityKg: finalKg,
+    });
 
-      const declaredKg = farmer.declaredQuantityKg !== undefined && farmer.declaredQuantityKg !== null
-        ? farmer.declaredQuantityKg
-        : finalKg;
+    const declaredKg = farmer.declaredQuantityKg !== undefined && farmer.declaredQuantityKg !== null
+      ? farmer.declaredQuantityKg
+      : finalKg;
 
-      const hasDiscrepancy = farmer.verifiedQuantityKg !== undefined &&
-        farmer.verifiedQuantityKg !== null &&
-        Math.abs(declaredKg - finalKg) > 0.01;
+    const hasDiscrepancy = farmer.verifiedQuantityKg !== undefined &&
+      farmer.verifiedQuantityKg !== null &&
+      Math.abs(declaredKg - finalKg) > 0.01;
 
-      const discrepancyPercent = (hasDiscrepancy && declaredKg > 0)
-        ? Math.round((Math.abs(declaredKg - finalKg) / declaredKg) * 1000) / 10
-        : 0;
+    const discrepancyPercent = (hasDiscrepancy && declaredKg > 0)
+      ? Math.round((Math.abs(declaredKg - finalKg) / declaredKg) * 1000) / 10
+      : 0;
 
-      farmer.receipt = {
-        receiptId: `RCPT-${farmer.id}`,
-        receiptStatus: "pending_release",
-        crop: farmer.crop,
-        variety: calcResult.variety,
-        declaredQuantity: farmer.declaredQuantity !== undefined ? farmer.declaredQuantity : null,
-        declaredUnit: farmer.declaredUnit || "bags",
-        declaredQuantityKg: declaredKg,
-        verifiedQuantity: farmer.verifiedQuantity !== undefined ? farmer.verifiedQuantity : null,
-        verifiedUnit: farmer.verifiedUnit || farmer.declaredUnit || "bags",
-        verifiedQuantityKg: finalKg,
-        hasDiscrepancy,
-        discrepancyPercent,
-        discrepancyReason: farmer.quantityDiscrepancyReason || null,
-        verifiedBy: farmer.verifiedBy || "Centre Admin",
-        verifiedAt: farmer.verifiedAt || null,
-        quantityKg: finalKg,
-        quintals: calcResult.quintals,
-        ratePerKg: calcResult.ratePerKg,
-        ratePerQuintal: calcResult.ratePerQuintal,
-        baseMspPerQuintal: calcResult.baseMspPerQuintal,
-        stateIncentivePerQuintal: calcResult.stateIncentivePerQuintal,
-        totalAmount: calcResult.totalAmount,
-        date: new Date().toISOString().split("T")[0],
-        farmerName: farmer.name,
-        centreName: centre?.name || farmer.centreId,
-      };
-      farmer.receiptStatus = "pending_release";
-    } else {
-      farmer.receipt.receiptStatus = farmer.receipt.receiptStatus || "pending_release";
-      farmer.receiptStatus = farmer.receipt.receiptStatus;
-    }
-    // Note: Official permanent procurement history snapshot is finalized upon explicit receipt release
+    const currentReceiptStatus = farmer.receipt?.receiptStatus || "pending_release";
+
+    farmer.receipt = {
+      receiptId: farmer.receipt?.receiptId || `RCPT-${farmer.id}`,
+      receiptStatus: currentReceiptStatus,
+      crop: farmer.crop,
+      variety: calcResult.variety,
+      declaredQuantity: farmer.declaredQuantity !== undefined ? farmer.declaredQuantity : null,
+      declaredUnit: farmer.declaredUnit || "bags",
+      declaredQuantityKg: declaredKg,
+      verifiedQuantity: farmer.verifiedQuantity !== undefined ? farmer.verifiedQuantity : null,
+      verifiedUnit: farmer.verifiedUnit || farmer.declaredUnit || "bags",
+      verifiedQuantityKg: finalKg,
+      hasDiscrepancy,
+      discrepancyPercent,
+      discrepancyReason: farmer.quantityDiscrepancyReason || null,
+      verifiedBy: farmer.verifiedBy || "Centre Admin",
+      verifiedAt: farmer.verifiedAt || null,
+      quantityKg: finalKg,
+      quintals: calcResult.quintals,
+      ratePerKg: calcResult.ratePerKg,
+      ratePerQuintal: calcResult.ratePerQuintal,
+      baseMspPerQuintal: calcResult.baseMspPerQuintal,
+      stateIncentivePerQuintal: calcResult.stateIncentivePerQuintal,
+      totalAmount: calcResult.totalAmount,
+      date: farmer.receipt?.date || new Date().toISOString().split("T")[0],
+      farmerName: farmer.name,
+      centreName: centre?.name || farmer.centreId,
+      releasedAt: farmer.receipt?.releasedAt,
+      processCompletedAt: farmer.receipt?.processCompletedAt,
+      releasedBy: farmer.receipt?.releasedBy,
+      completedByAdminId: farmer.completedByAdminId || farmer.receipt?.completedByAdminId,
+    };
+    farmer.receiptStatus = currentReceiptStatus;
+    farmer.ratePerKg = calcResult.ratePerKg;
+    farmer.ratePerQuintal = calcResult.ratePerQuintal;
+    farmer.baseMspPerQuintal = calcResult.baseMspPerQuintal;
+    farmer.stateIncentivePerQuintal = calcResult.stateIncentivePerQuintal;
+    farmer.quintals = calcResult.quintals;
+    farmer.totalAmount = calcResult.totalAmount;
+    // Official permanent procurement history snapshot created on PAID
+    createProcurementHistorySnapshot(farmer);
   }
   scheduleSave();
   return farmer;
 }
 
-function releaseFarmerReceipt(id, { adminName } = {}) {
+function releaseFarmerReceipt(id, { adminName, adminId, adminToken, adjustmentReason } = {}) {
   const farmer = getFarmer(id);
   if (!farmer) {
     return { error: "Farmer not found", status: 404 };
+  }
+
+  // If farmer has verified produce weighment and is in PROCURED or PAYMENT_INITIATED, advance to PAID
+  if (farmer.status === STATUS.PROCURED || farmer.status === STATUS.PAYMENT_INITIATED) {
+    farmer.status = STATUS.PAID;
+    farmer.stageChangedAt = Date.now();
+    if (!farmer.procuredAt) farmer.procuredAt = Date.now();
+  }
+
+  // Self-heal: ensure receipt calculation is populated if farmer is paid
+  if (farmer.status === STATUS.PAID && (!farmer.receipt || !farmer.receipt.totalAmount)) {
+    updateFarmerStatus(id, STATUS.PAID);
   }
 
   if (farmer.status !== STATUS.PAID || !farmer.receipt) {
@@ -1579,22 +2479,95 @@ function releaseFarmerReceipt(id, { adminName } = {}) {
     return { error: "Paddy variety is required before releasing receipt", status: 400 };
   }
 
+  // Detect quantity mismatch between Verified Quantity and Declared Quantity
+  const declaredKg = Number(
+    farmer.declaredQuantityKg !== undefined && farmer.declaredQuantityKg !== null
+      ? farmer.declaredQuantityKg
+      : (farmer.quantityKg || finalKg)
+  );
+  const hasQuantityMismatch = Math.abs(finalKg - declaredKg) > 0.01;
+
+  const cleanReason = adjustmentReason && typeof adjustmentReason === "string" ? adjustmentReason.trim() : null;
+  const existingReason = receipt.adjustmentReason || farmer.adjustmentReason || receipt.discrepancyReason || farmer.quantityDiscrepancyReason || null;
+  const finalAdjustmentReason = cleanReason || existingReason || null;
+
+  if (hasQuantityMismatch && !finalAdjustmentReason) {
+    return {
+      error: "Reason for adjustment is required when verified quantity differs from declared quantity",
+      status: 400,
+    };
+  }
+
+  if (finalAdjustmentReason) {
+    receipt.adjustmentReason = finalAdjustmentReason;
+    farmer.adjustmentReason = finalAdjustmentReason;
+  }
+
   const now = Date.now();
   receipt.receiptStatus = "released";
   receipt.releasedAt = now;
+  receipt.processCompletedAt = now;
   receipt.releasedBy = adminName ? String(adminName).trim() : "Centre Admin";
   farmer.receiptStatus = "released";
+
+  // Resolve completing Admin ID
+  let cleanAdminId = null;
+  if (adminId) {
+    cleanAdminId = String(adminId).trim().toUpperCase();
+  } else if (adminToken) {
+    const authedAdmin = getAuthenticatedAdmin(adminToken);
+    if (authedAdmin?.adminId) {
+      cleanAdminId = authedAdmin.adminId.trim().toUpperCase();
+    }
+  } else if (farmer.completedByAdminId) {
+    cleanAdminId = String(farmer.completedByAdminId).trim().toUpperCase();
+  }
+
+  if (cleanAdminId) {
+    farmer.completedByAdminId = cleanAdminId;
+    receipt.completedByAdminId = cleanAdminId;
+
+    // Strict Per-Admin Uniqueness & Forward-Only tracking
+    const admin = findRegisteredAdmin({ adminId: cleanAdminId }) ||
+      registeredAdmins.find((a) => a && a.adminId && a.adminId.trim().toUpperCase() === cleanAdminId);
+
+    if (admin) {
+      admin.procurementsHandled = Array.isArray(admin.procurementsHandled) ? admin.procurementsHandled : [];
+      const alreadyLogged = admin.procurementsHandled.some((r) => r.tokenId === farmer.id);
+      if (!alreadyLogged) {
+        const handledRecord = {
+          farmerId: String(farmer.farmerId || farmer.id),
+          tokenId: String(farmer.id),
+          farmerName: String(farmer.name || ""),
+          identityType: farmer.email ? "google" : "phone",
+          identityValue: farmer.email ? String(farmer.email).trim() : (farmer.phone ? String(farmer.phone).trim() : "Not provided"),
+          phone: farmer.phone ? String(farmer.phone).trim() : null,
+          email: farmer.email ? String(farmer.email).trim() : null,
+          crop: String(farmer.crop || receipt.crop || "Paddy"),
+          completedAt: now,
+          completedByAdminId: cleanAdminId,
+        };
+        admin.procurementsHandled.unshift(handledRecord);
+      }
+    }
+  }
 
   // Create or update the official immutable snapshot record
   createProcurementHistorySnapshot(farmer);
 
   // Trigger in-app notification to the farmer
   const totalFormatted = totalAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 });
-  const notifMsg = `Your payment receipt for token ${farmer.id} is ready. Total amount: ₹${totalFormatted}. Tap to view and download.`;
+  let notifMsg = `Your payment receipt for token ${farmer.id} is ready. Total amount: ₹${totalFormatted}. Tap to view and download.`;
+  if (hasQuantityMismatch && receipt.adjustmentReason) {
+    notifMsg = `Your payment receipt for token ${farmer.id} is ready. Total amount: ₹${totalFormatted}. Note: Verified quantity adjusted from Declared Quantity — Reason: ${receipt.adjustmentReason}. Tap to view and download.`;
+  }
 
   addNotification({
     identifier: farmer.phone || farmer.email || farmer.id,
+    identifiers: [farmer.phone, farmer.email, farmer.id, farmer.farmerId].filter(Boolean),
     tokenId: farmer.id,
+    farmerName: farmer.name,
+    crop: farmer.crop || receipt.crop,
     title: "Payment Receipt Ready",
     message: notifMsg,
   });
@@ -1716,7 +2689,8 @@ function getFarmersByIdentifier(identifier) {
   return farmers.filter((f) => {
     const phoneMatch = f.phone && String(f.phone).trim().toLowerCase() === clean;
     const emailMatch = f.email && String(f.email).trim().toLowerCase() === clean;
-    return phoneMatch || emailMatch;
+    const farmerIdMatch = f.farmerId && String(f.farmerId).trim().toLowerCase() === clean;
+    return phoneMatch || emailMatch || farmerIdMatch;
   });
 }
 
@@ -1844,22 +2818,24 @@ function allFarmers() {
 // -------------------------------------------------------------
 // In-App Notifications Management
 // -------------------------------------------------------------
-function addNotification({ identifier, identifiers, tokenId, title, message }) {
+function addNotification({ id, identifier, identifiers, tokenId, farmerName, crop, title, message }) {
   const cleanIdentifiers = [];
   if (identifier) cleanIdentifiers.push(String(identifier).trim().toLowerCase());
   if (Array.isArray(identifiers)) {
-    identifiers.forEach((id) => {
-      if (id) {
-        const c = String(id).trim().toLowerCase();
+    identifiers.forEach((idVal) => {
+      if (idVal) {
+        const c = String(idVal).trim().toLowerCase();
         if (!cleanIdentifiers.includes(c)) cleanIdentifiers.push(c);
       }
     });
   }
   const item = {
-    id: `NOTIF-${notificationCounter++}-${Date.now()}`,
+    id: id || `NOTIF-${notificationCounter++}-${Date.now()}`,
     identifier: identifier ? String(identifier).trim().toLowerCase() : (cleanIdentifiers[0] || null),
     identifiers: cleanIdentifiers,
     tokenId: tokenId || null,
+    farmerName: farmerName || null,
+    crop: crop || null,
     title: title || "Slot Swap Alert",
     message: String(message),
     timestamp: Date.now(),
@@ -1868,6 +2844,69 @@ function addNotification({ identifier, identifiers, tokenId, title, message }) {
   notifications.unshift(item);
   scheduleSave();
   return item;
+}
+
+function checkAndTriggerQueueNotification(farmer, queuePosition) {
+  if (!farmer || queuePosition === null || queuePosition === undefined) return null;
+  if (farmer.status === STATUS.CANCELLED || farmer.status === STATUS.PAID) return null;
+
+  farmer.queueNotified = farmer.queueNotified || {};
+
+  // Rule 1: Live queue position becomes exactly 5
+  if (queuePosition === 5) {
+    if (!farmer.queueNotified[5]) {
+      const exists = notifications.some(
+        (n) => n.tokenId === farmer.id && (n.id === `NOTIF-QUEUE-5-${farmer.id}` || n.message.includes("5th position of the queue"))
+      );
+      if (!exists) {
+        farmer.queueNotified[5] = true;
+        const slotTiming = farmer.slotTime || "11:00 AM to 12:00 PM";
+        const msg = `Reach your procurement centre. You are in 5th position of the queue. Your slot timing is ${slotTiming}.`;
+        const notif = addNotification({
+          id: `NOTIF-QUEUE-5-${farmer.id}`,
+          identifier: farmer.phone || farmer.email || farmer.id,
+          identifiers: [farmer.phone, farmer.email, farmer.id].filter(Boolean),
+          tokenId: farmer.id,
+          farmerName: farmer.name,
+          crop: farmer.crop,
+          title: "Reach Procurement Centre",
+          message: msg,
+        });
+        scheduleSave();
+        return notif;
+      } else {
+        farmer.queueNotified[5] = true;
+      }
+    }
+  }
+  // Rule 2: Live queue position becomes exactly 1
+  else if (queuePosition === 1) {
+    if (!farmer.queueNotified[1]) {
+      const exists = notifications.some(
+        (n) => n.tokenId === farmer.id && (n.id === `NOTIF-QUEUE-1-${farmer.id}` || n.message.includes("You are next in line"))
+      );
+      if (!exists) {
+        farmer.queueNotified[1] = true;
+        const msg = "You are next in line. Please be ready for procurement.";
+        const notif = addNotification({
+          id: `NOTIF-QUEUE-1-${farmer.id}`,
+          identifier: farmer.phone || farmer.email || farmer.id,
+          identifiers: [farmer.phone, farmer.email, farmer.id].filter(Boolean),
+          tokenId: farmer.id,
+          farmerName: farmer.name,
+          crop: farmer.crop,
+          title: "Your Turn Next",
+          message: msg,
+        });
+        scheduleSave();
+        return notif;
+      } else {
+        farmer.queueNotified[1] = true;
+      }
+    }
+  }
+  // Positions 4, 3, 2 deliberately do not send notifications
+  return null;
 }
 
 function getNotificationsForFarmer(identifier) {
@@ -1944,7 +2983,8 @@ function markAllNotificationsRead(identifier) {
 // -------------------------------------------------------------
 // Slot Swap Flow Management
 // -------------------------------------------------------------
-function createSwapRequest({ senderTokenId, receiverTokenId }) {
+// -------------------------------------------------------------
+function createSwapRequest({ senderTokenId, receiverTokenId, initiatedBy = "farmer", reason = null }) {
   const sender = getFarmer(senderTokenId);
   const receiver = getFarmer(receiverTokenId);
 
@@ -1999,22 +3039,26 @@ function createSwapRequest({ senderTokenId, receiverTokenId }) {
     receiverCrop: receiver.crop,
     centreId: sender.centreId,
     status: "pending",
+    initiatedBy: initiatedBy || "farmer",
+    reason: reason || null,
     createdAt: Date.now(),
     respondedAt: null,
   };
 
   swapRequests.push(swapReq);
 
-  // Trigger in-app notification to receiver
-  const receiverIdentifier = receiver.phone || receiver.email || receiver.id;
-  const incomingMsg = `${sender.name} (Token ${sender.id}) requested to swap slots with your token ${receiver.id}. Their slot: ${sender.slotDate} (${sender.slotTime}) for your slot: ${receiver.slotDate} (${receiver.slotTime}).`;
-  
-  addNotification({
-    identifier: receiverIdentifier,
-    tokenId: receiver.id,
-    title: "Incoming Slot Swap Request",
-    message: incomingMsg,
-  });
+  // Trigger in-app notification to receiver for peer-to-peer requests only
+  if (swapReq.initiatedBy !== "admin") {
+    const receiverIdentifier = receiver.phone || receiver.email || receiver.id;
+    const incomingMsg = `${sender.name} (Token ${sender.id}) requested to swap slots with your token ${receiver.id}. Their slot: ${sender.slotDate} (${sender.slotTime}) for your slot: ${receiver.slotDate} (${receiver.slotTime}).`;
+    
+    addNotification({
+      identifier: receiverIdentifier,
+      tokenId: receiver.id,
+      title: "Incoming Slot Swap Request",
+      message: incomingMsg,
+    });
+  }
 
   scheduleSave();
   return { success: true, swapRequest: swapReq };
@@ -2153,27 +3197,46 @@ function respondSwapRequest({ swapRequestId, response, responderIdentifier }) {
   swapReq.respondedAt = Date.now();
 
   // 3. TRIGGER NOTIFICATIONS WITH EXACT REQUIRED TEXT
-  // Sender Notification: "Your slot swap request was accepted. Your new slot is [date/time] with token [new token number]."
   const senderNewSlotStr = `${sender.slotDate} (${sender.slotTime})`;
-  const senderAcceptedMsg = `Your slot swap request was accepted. Your new slot is ${senderNewSlotStr} with token ${sender.id}.`;
-
-  addNotification({
-    identifier: senderIdentifier,
-    tokenId: sender.id,
-    title: "Slot Swap Accepted",
-    message: senderAcceptedMsg,
-  });
-
-  // Receiver Notification
   const receiverNewSlotStr = `${receiver.slotDate} (${receiver.slotTime})`;
-  const receiverAcceptedMsg = `You accepted the slot swap request. Your new slot is ${receiverNewSlotStr} with token ${receiver.id}.`;
 
-  addNotification({
-    identifier: receiverIdentifier,
-    tokenId: receiver.id,
-    title: "Slot Swap Completed",
-    message: receiverAcceptedMsg,
-  });
+  if (swapReq.initiatedBy === "admin") {
+    // Exact required text for admin urgent swaps:
+    // "Admin reassigned your slot with [Farmer B] due to: [reason]. Your new slot is [time] with token [id]."
+    const senderAdminMsg = `Admin reassigned your slot with ${receiver.name} due to: ${swapReq.reason || "Urgent operational requirement"}. Your new slot is ${senderNewSlotStr} with token ${sender.id}.`;
+    addNotification({
+      identifier: senderIdentifier,
+      tokenId: sender.id,
+      title: "Urgent Slot Reassignment (Admin)",
+      message: senderAdminMsg,
+    });
+
+    const receiverAdminMsg = `Admin reassigned your slot with ${sender.name} due to: ${swapReq.reason || "Urgent operational requirement"}. Your new slot is ${receiverNewSlotStr} with token ${receiver.id}.`;
+    addNotification({
+      identifier: receiverIdentifier,
+      tokenId: receiver.id,
+      title: "Urgent Slot Reassignment (Admin)",
+      message: receiverAdminMsg,
+    });
+  } else {
+    // Sender Notification: "Your slot swap request was accepted. Your new slot is [date/time] with token [new token number]."
+    const senderAcceptedMsg = `Your slot swap request was accepted. Your new slot is ${senderNewSlotStr} with token ${sender.id}.`;
+    addNotification({
+      identifier: senderIdentifier,
+      tokenId: sender.id,
+      title: "Slot Swap Accepted",
+      message: senderAcceptedMsg,
+    });
+
+    // Receiver Notification
+    const receiverAcceptedMsg = `You accepted the slot swap request. Your new slot is ${receiverNewSlotStr} with token ${receiver.id}.`;
+    addNotification({
+      identifier: receiverIdentifier,
+      tokenId: receiver.id,
+      title: "Slot Swap Completed",
+      message: receiverAcceptedMsg,
+    });
+  }
 
   scheduleSave();
   return {
@@ -2182,6 +3245,55 @@ function respondSwapRequest({ swapRequestId, response, responderIdentifier }) {
     senderFarmer: sender,
     receiverFarmer: receiver,
   };
+}
+
+function createAdminUrgentSwap({ farmerTokenId1, farmerTokenId2, reason }) {
+  if (!farmerTokenId1 || !farmerTokenId2) {
+    return { error: "Both farmerTokenId1 and farmerTokenId2 are required", status: 400 };
+  }
+
+  if (!reason || typeof reason !== "string" || !reason.trim()) {
+    return { error: "A valid reason is required for admin-initiated urgent slot swapping", status: 400 };
+  }
+
+  // 1. Create swap request with initiatedBy: "admin" and reason
+  const createResult = createSwapRequest({
+    senderTokenId: farmerTokenId1,
+    receiverTokenId: farmerTokenId2,
+    initiatedBy: "admin",
+    reason: reason.trim(),
+  });
+
+  if (!createResult.success) {
+    return createResult;
+  }
+
+  // 2. Execute immediate atomic swap through the same respondSwapRequest logic
+  const acceptResult = respondSwapRequest({
+    swapRequestId: createResult.swapRequest.id,
+    response: "accept",
+  });
+
+  if (!acceptResult.success) {
+    return acceptResult;
+  }
+
+  return {
+    success: true,
+    message: "Urgent slot swap executed successfully",
+    swapRequest: acceptResult.swapRequest,
+    senderFarmer: acceptResult.senderFarmer,
+    receiverFarmer: acceptResult.receiverFarmer,
+  };
+}
+
+function getSwapRequestsForCentre(centreId) {
+  if (!centreId) {
+    return swapRequests.slice().sort((a, b) => (b.respondedAt || b.createdAt || 0) - (a.respondedAt || a.createdAt || 0));
+  }
+  return swapRequests
+    .filter((r) => r.centreId === centreId)
+    .sort((a, b) => (b.respondedAt || b.createdAt || 0) - (a.respondedAt || a.createdAt || 0));
 }
 
 function getSwapRequestsForFarmer(identifier) {
@@ -2382,11 +3494,14 @@ export default {
   computeSlotStatus,
   getTodayDateString,
   addNotification,
+  checkAndTriggerQueueNotification,
   getNotificationsForFarmer,
   markNotificationRead,
   markAllNotificationsRead,
   createSwapRequest,
   respondSwapRequest,
+  createAdminUrgentSwap,
+  getSwapRequestsForCentre,
   getSwapRequestsForFarmer,
   getAvailableSwapPartners,
   generateSlotTimesForCentre,
@@ -2399,5 +3514,442 @@ export default {
   procurementHistoryRecords,
   saveImmediately,
   loadPersistedData,
+  DISTRICT_CODE_MAP,
+  resolveDistrictCode,
+  resolveDistrictName,
+  generateFarmerId,
+  farmerIdCounters,
   PERSISTENCE_FILE,
+  registeredFarmers,
+  allRegisteredFarmers,
+  findRegisteredFarmer,
+  registerFarmerAccount,
+  authenticateFarmerLogin,
+  registeredAdmins,
+  allRegisteredAdmins,
+  findRegisteredAdmin,
+  generateAdminId,
+  registerAdminAccount,
+  hashPassword,
+  getLatestRegisteredAdmin,
+  setAdminSession,
+  getAdminSession,
+  clearAdminSession,
+  clearAllAdminSessions,
+  clearRegisteredAdmins,
+  clearAllFarmerData,
+  getAuthenticatedAdmin,
+  ADMIN_DISTRICT_CODE_MAP,
+  resolveAdminDistrictCode,
+  resolveAdminDistrictName,
+  extractBirthYear,
+  syncAdminIdCounters,
+  getAdminProcurements,
+  adminIdCounters,
+  inFlightAdminIds,
 };
+
+export function resolveAdminDistrictCode(districtOrCentreId) {
+  if (!districtOrCentreId) return null;
+  const str = String(districtOrCentreId).trim();
+
+  // If a centre ID like "C01" or code like "TNJ" / "THJ"
+  const centre = centres.find(
+    (c) => c.id.toUpperCase() === str.toUpperCase() || c.code.toUpperCase() === str.toUpperCase()
+  );
+  if (centre && centre.district) {
+    const distNorm = centre.district.trim().toLowerCase();
+    if (distNorm === "thanjavur") return "TNJ";
+    if (distNorm === "villupuram") return "VPM";
+    if (distNorm === "cuddalore") return "CDL";
+  }
+
+  const norm = str.toLowerCase();
+  if (norm === "thanjavur" || norm === "tnj" || norm === "thj") return "TNJ";
+  if (norm === "villupuram" || norm === "vpm") return "VPM";
+  if (norm === "cuddalore" || norm === "cdl") return "CDL";
+
+  return null;
+}
+
+export function resolveAdminDistrictName(districtOrCode) {
+  const code = resolveAdminDistrictCode(districtOrCode);
+  if (!code) return null;
+  for (const [name, c] of Object.entries(ADMIN_DISTRICT_CODE_MAP)) {
+    if (c === code) return name;
+  }
+  return null;
+}
+
+export function extractBirthYear(dob) {
+  if (!dob) return null;
+  const str = String(dob).trim();
+
+  // Format 1: Leading 4-digit year e.g. "2001-08-15", "2001/08/15", "2001.08.15"
+  const leadingMatch = str.match(/^(\d{4})[-\/\.]\d{1,2}[-\/\.]\d{1,2}/);
+  if (leadingMatch) return leadingMatch[1];
+
+  // Format 2: Trailing 4-digit year e.g. "15/08/2001", "15-08-2001", "15.08.2001"
+  const trailingMatch = str.match(/\d{1,2}[-\/\.]\d{1,2}[-\/\.](\d{4})$/);
+  if (trailingMatch) return trailingMatch[1];
+
+  // Format 3: Isolated 4-digit year (1900-2099)
+  const yearMatch = str.match(/\b(19\d{2}|20\d{2})\b/);
+  if (yearMatch) return yearMatch[1];
+
+  // Format 4: Date object fallback
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) {
+    const yr = parsed.getFullYear();
+    if (yr >= 1900 && yr <= 2100) {
+      return String(yr);
+    }
+  }
+
+  return null;
+}
+
+export function generateAdminId(districtOrOptions, maybeDob, maybeRegYear) {
+  let districtInput;
+  let dob;
+  let regYearInput;
+  let shouldReserve = false;
+
+  if (districtOrOptions && typeof districtOrOptions === "object") {
+    districtInput =
+      districtOrOptions.district ||
+      districtOrOptions.districtCode ||
+      districtOrOptions.districtOrCentreId;
+    dob = districtOrOptions.dob || districtOrOptions.dateOfBirth;
+    regYearInput =
+      districtOrOptions.registrationYear ||
+      districtOrOptions.regYear ||
+      districtOrOptions.year;
+    shouldReserve = Boolean(districtOrOptions.reserve);
+  } else {
+    districtInput = districtOrOptions;
+    dob = maybeDob;
+    regYearInput = maybeRegYear;
+  }
+
+  const districtCode = resolveAdminDistrictCode(districtInput);
+  if (!districtCode) {
+    const err = new Error("Invalid district. Please select Thanjavur, Villupuram, or Cuddalore.");
+    err.status = 400;
+    throw err;
+  }
+
+  const birthYear = extractBirthYear(dob);
+  if (!birthYear) {
+    const err = new Error("Date of Birth is required with a valid 4-digit birth year to generate Admin ID.");
+    err.status = 400;
+    throw err;
+  }
+
+  let regYear = regYearInput ? Number(regYearInput) : new Date().getFullYear();
+  if (isNaN(regYear) || regYear < 2000 || regYear > 2100) {
+    regYear = new Date().getFullYear();
+  }
+
+  const yy = String(regYear).slice(-2);
+
+  // Generate random 3-digit number (000-999) with collision checking
+  let adminId = null;
+  let attempts = 0;
+  const maxAttempts = 1000;
+
+  while (attempts < maxAttempts) {
+    attempts++;
+    const randomNum = crypto.randomInt(0, 1000);
+    const rrr = String(randomNum).padStart(3, "0");
+    const candidate = `${districtCode}-CA${yy}-${rrr}${birthYear}`;
+
+    // Collision check against all registered admins and any currently in-flight registrations
+    const collisionWithRegistered =
+      Array.isArray(registeredAdmins) &&
+      registeredAdmins.some((a) => a && a.adminId === candidate);
+    const collisionWithInFlight = inFlightAdminIds.has(candidate);
+
+    if (!collisionWithRegistered && !collisionWithInFlight) {
+      adminId = candidate;
+      break;
+    }
+  }
+
+  if (!adminId) {
+    const err = new Error(
+      `Admin ID generation failed: capacity reached for district ${districtCode} in year ${regYear} with birth year ${birthYear} after ${maxAttempts} attempts.`
+    );
+    err.status = 500;
+    err.isCapacityReached = true;
+    throw err;
+  }
+
+  if (shouldReserve) {
+    inFlightAdminIds.add(adminId);
+  }
+
+  return adminId;
+}
+
+export function registerAdminAccount({
+  name,
+  dob,
+  district,
+  procurementCentreName,
+  alternatePhone,
+  phone,
+  email,
+  signupMethod,
+  registrationYear,
+  password,
+  confirmPassword,
+}) {
+  if (!name || typeof name !== "string" || !name.trim()) {
+    const err = new Error("Full name is required.");
+    err.status = 400;
+    throw err;
+  }
+
+  if (!dob || typeof dob !== "string" || !dob.trim()) {
+    const err = new Error("Date of Birth is required.");
+    err.status = 400;
+    throw err;
+  }
+
+  const birthYear = extractBirthYear(dob);
+  if (!birthYear) {
+    const err = new Error("Valid Date of Birth is required to determine birth year.");
+    err.status = 400;
+    throw err;
+  }
+
+  if (!district || typeof district !== "string" || !district.trim()) {
+    const err = new Error("District is mandatory. Please select Thanjavur, Villupuram, or Cuddalore.");
+    err.status = 400;
+    throw err;
+  }
+
+  const districtCode = resolveAdminDistrictCode(district);
+  if (!districtCode) {
+    const err = new Error("Invalid district. Please select Thanjavur, Villupuram, or Cuddalore.");
+    err.status = 400;
+    throw err;
+  }
+  const districtName = resolveAdminDistrictName(districtCode);
+
+  if (!procurementCentreName || typeof procurementCentreName !== "string" || !procurementCentreName.trim()) {
+    const err = new Error("Procurement Centre Name is mandatory.");
+    err.status = 400;
+    throw err;
+  }
+
+  // Alternate Phone Number is OPTIONAL - simple input, no strict cross-validation
+  let cleanAlternatePhone = null;
+  if (alternatePhone !== undefined && alternatePhone !== null && String(alternatePhone).trim() !== "") {
+    cleanAlternatePhone = String(alternatePhone).trim();
+  }
+
+  // Password creation validation
+  if (!password || typeof password !== "string" || !password.trim()) {
+    const err = new Error("Create Password is required.");
+    err.status = 400;
+    throw err;
+  }
+
+  if (password.length < 6) {
+    const err = new Error("Password must be at least 6 characters.");
+    err.status = 400;
+    throw err;
+  }
+
+  if (!confirmPassword || typeof confirmPassword !== "string" || !confirmPassword.trim()) {
+    const err = new Error("Confirm Password is required.");
+    err.status = 400;
+    throw err;
+  }
+
+  if (confirmPassword !== password) {
+    const err = new Error("Confirm Password does not match.");
+    err.status = 400;
+    throw err;
+  }
+
+  const passwordHash = hashPassword(password);
+
+  const cleanPhone = phone ? String(phone).trim() : null;
+  const cleanEmail = email ? String(email).trim().toLowerCase() : null;
+
+  // Resolve procurement centre ID if available
+  let cleanProcurementCentreId = null;
+  const matchedCentre = centres.find(
+    (c) =>
+      c.name.toLowerCase() === procurementCentreName.trim().toLowerCase() ||
+      c.id.toLowerCase() === procurementCentreName.trim().toLowerCase()
+  );
+  if (matchedCentre) {
+    cleanProcurementCentreId = matchedCentre.id;
+  }
+
+  const now = new Date();
+  const registeredAt = now.toISOString();
+  const createdAt = now.getTime();
+  const regYear = registrationYear ? Number(registrationYear) : now.getFullYear();
+
+  const adminId = generateAdminId({
+    district: districtCode,
+    dob,
+    registrationYear: regYear,
+    reserve: true,
+  });
+
+  try {
+    const adminRecord = {
+      adminId,
+      name: name.trim(),
+      dob: dob.trim(),
+      district: districtName,
+      districtCode,
+      procurementCentreName: procurementCentreName.trim(),
+      procurementCentreId: cleanProcurementCentreId,
+      centreId: cleanProcurementCentreId,
+      alternatePhone: cleanAlternatePhone,
+      phone: cleanPhone,
+      email: cleanEmail,
+      signupMethod: signupMethod || (cleanEmail ? "google" : "phone"),
+      passwordHash,
+      password: passwordHash, // Ensure only the hashed password is ever stored or accessible, never plain text
+      procurementsHandled: [],
+      registeredAt,
+      createdAt,
+    };
+
+    registeredAdmins.push(adminRecord);
+    scheduleSave();
+
+    return adminRecord;
+  } finally {
+    inFlightAdminIds.delete(adminId);
+  }
+}
+
+export function hashPassword(password) {
+  const saltRounds = 10;
+  return bcrypt.hashSync(password, saltRounds);
+}
+
+export function findRegisteredAdmin({ adminId, phone, email, name } = {}) {
+  const cleanId = adminId ? String(adminId).trim().toUpperCase() : null;
+  const cleanPhone = phone ? String(phone).trim() : null;
+  const cleanEmail = email ? String(email).trim().toLowerCase() : null;
+  const cleanName = name ? String(name).trim().toLowerCase() : null;
+
+  return registeredAdmins.find((a) => {
+    if (cleanId && a.adminId && a.adminId.toUpperCase() === cleanId) return true;
+    if (cleanPhone && a.phone && a.phone === cleanPhone) return true;
+    if (cleanEmail && a.email && a.email.toLowerCase() === cleanEmail) return true;
+    if (cleanName && a.name && a.name.toLowerCase() === cleanName) return true;
+    return false;
+  }) || null;
+}
+
+export function allRegisteredAdmins() {
+  return [...registeredAdmins];
+}
+
+export function getLatestRegisteredAdmin() {
+  if (!registeredAdmins || registeredAdmins.length === 0) return null;
+  return registeredAdmins[registeredAdmins.length - 1];
+}
+
+// In-memory admin session registry
+const adminSessions = new Map();
+
+export function setAdminSession(token, admin) {
+  if (!token) return;
+  adminSessions.set(token, {
+    token,
+    adminId: admin?.adminId || null,
+    admin: admin || null,
+    createdAt: Date.now(),
+  });
+}
+
+export function getAdminSession(token) {
+  if (!token) return null;
+  return adminSessions.get(token) || null;
+}
+
+export function clearAdminSession(token) {
+  if (token) adminSessions.delete(token);
+}
+
+export function clearAllAdminSessions() {
+  adminSessions.clear();
+}
+
+export function clearRegisteredAdmins() {
+  registeredAdmins.length = 0;
+  adminSessions.clear();
+  inFlightAdminIds.clear();
+  scheduleSave();
+}
+
+export function clearAllFarmerData() {
+  farmers.length = 0;
+  registeredFarmers.length = 0;
+  farmerIdCounters = {
+    THJ: 0,
+    VPM: 0,
+    CDL: 0,
+  };
+  centreCounters = {};
+  procurementHistoryRecords.length = 0;
+  tickets.length = 0;
+  ticketCounter = 1;
+  swapRequests.length = 0;
+  swapCounter = 1;
+  notifications.length = 0;
+  notificationCounter = 1;
+
+  if (Array.isArray(registeredAdmins)) {
+    for (const admin of registeredAdmins) {
+      if (admin && Array.isArray(admin.procurementsHandled)) {
+        admin.procurementsHandled = [];
+      }
+    }
+  }
+
+  saveImmediately();
+  return { success: true };
+}
+
+export function getAuthenticatedAdmin(tokenOrId) {
+  if (!tokenOrId) {
+    return null;
+  }
+  const sess = adminSessions.get(tokenOrId);
+  if (sess) {
+    if (sess.adminId) {
+      const found = findRegisteredAdmin({ adminId: sess.adminId });
+      if (found) return found;
+    }
+    if (sess.admin) return sess.admin;
+  }
+  const byId = findRegisteredAdmin({ adminId: tokenOrId });
+  if (byId) return byId;
+
+  return null;
+}
+
+export function getAdminProcurements(adminId) {
+  if (!adminId) return [];
+  const cleanId = String(adminId).trim().toUpperCase();
+  const admin = registeredAdmins.find(
+    (a) => a && a.adminId && a.adminId.trim().toUpperCase() === cleanId
+  );
+  return admin && Array.isArray(admin.procurementsHandled)
+    ? [...admin.procurementsHandled]
+    : [];
+}
+

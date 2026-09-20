@@ -40,7 +40,17 @@ export function sanitizePlainText(text) {
   // 7. Remove blockquotes '> text'
   cleaned = cleaned.replace(/^>\s+/gm, "");
 
-  // 8. Clean up trailing/excessive whitespace and empty lines
+  // 8. Remove hashtags used as formatting or labels
+  cleaned = cleaned.replace(/#+([^\s#]+)/g, "$1").replace(/#+/g, "");
+
+  // 9. Strip emojis and decorative symbols
+  try {
+    cleaned = cleaned.replace(/[\p{Extended_Pictographic}\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "");
+  } catch {
+    cleaned = cleaned.replace(/[\uD83C-\uDBFF\uDC00-\uDFFF]/g, "");
+  }
+
+  // 10. Clean up trailing/excessive whitespace and empty lines
   cleaned = cleaned
     .split("\n")
     .map((line) => line.trim())

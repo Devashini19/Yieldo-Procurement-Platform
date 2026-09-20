@@ -188,12 +188,13 @@ export default function FarmerProfileMenu({ farmerUser, onLogout }) {
             right: 0,
             width: 350,
             maxWidth: "92vw",
+            maxHeight: "88vh",
+            overflowY: "auto",
             background: "#ffffff",
             border: "1px solid var(--line)",
             borderRadius: 12,
             boxShadow: "0 12px 36px rgba(0, 0, 0, 0.16)",
             zIndex: 1100,
-            overflow: "hidden",
             display: "flex",
             flexDirection: "column",
             animation: "fadeIn 0.15s ease-out",
@@ -288,6 +289,38 @@ export default function FarmerProfileMenu({ farmerUser, onLogout }) {
                   {displayIdentifier}
                 </div>
 
+                {profile?.farmerId && (
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: "var(--wheat-light)",
+                      marginTop: 3,
+                      fontFamily: "var(--font-mono)",
+                      letterSpacing: 0.5,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <span>Farmer ID: {profile.farmerId}</span>
+                    {profile.district && (
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 600,
+                          background: "rgba(255, 255, 255, 0.15)",
+                          padding: "1px 5px",
+                          borderRadius: 4,
+                          color: "#fff",
+                        }}
+                      >
+                        {profile.district}
+                      </span>
+                    )}
+                  </div>
+                )}
+
                 <div
                   style={{
                     fontSize: 11,
@@ -304,6 +337,147 @@ export default function FarmerProfileMenu({ farmerUser, onLogout }) {
                   </span>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Registered Farmer Profile Details */}
+          <div
+            style={{
+              padding: "12px 14px",
+              background: "#ffffff",
+              borderBottom: "1px solid var(--line)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: "#6A6553",
+                textTransform: "uppercase",
+                letterSpacing: 0.5,
+                marginBottom: 8,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <span>🌾 {t("profile_details_title")}</span>
+              {profile?.district && (
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    background: "rgba(31, 61, 43, 0.1)",
+                    color: "var(--field)",
+                    padding: "2px 6px",
+                    borderRadius: 8,
+                  }}
+                >
+                  📍 {profile.district}
+                </span>
+              )}
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
+              {/* Primary Mobile */}
+              {(profile?.phone || (!displayIdentifier.includes("@") ? displayIdentifier : "")) && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ color: "#6A6553" }}>📱 {t("profile_primary_phone")}</span>
+                  <span style={{ fontWeight: 600, fontFamily: "var(--font-mono)", color: "var(--ink)" }}>
+                    {profile?.phone || (!displayIdentifier.includes("@") ? displayIdentifier : "")}
+                  </span>
+                </div>
+              )}
+
+              {/* Alternate Mobile */}
+              {profile?.alternatePhone && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ color: "#6A6553" }}>📞 {t("profile_alt_phone")}</span>
+                  <span style={{ fontWeight: 600, fontFamily: "var(--font-mono)", color: "var(--ink)" }}>
+                    {profile.alternatePhone}
+                  </span>
+                </div>
+              )}
+
+              {/* Google / Email */}
+              {(profile?.email || (displayIdentifier.includes("@") ? displayIdentifier : "")) && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                  <span style={{ color: "#6A6553", whiteSpace: "nowrap" }}>🌐 {t("profile_email")}</span>
+                  <span
+                    style={{
+                      fontWeight: 600,
+                      color: "var(--ink)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      maxWidth: 180,
+                    }}
+                    title={profile?.email || displayIdentifier}
+                  >
+                    {profile?.email || displayIdentifier}
+                  </span>
+                </div>
+              )}
+
+              {/* Village / Area */}
+              {(profile?.area || profile?.village) && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ color: "#6A6553" }}>🏡 {t("profile_village_area")}</span>
+                  <span style={{ fontWeight: 600, color: "var(--ink)" }}>
+                    {profile.area || profile.village}
+                  </span>
+                </div>
+              )}
+
+              {/* Registered Crops */}
+              <div style={{ marginTop: 2 }}>
+                <div style={{ color: "#6A6553", marginBottom: 4 }}>🌾 {t("profile_reg_crops")}</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  {(Array.isArray(profile?.crops) && profile.crops.length > 0
+                    ? profile.crops
+                    : profile?.crop
+                    ? [profile.crop]
+                    : ["paddy"]
+                  ).map((c) => (
+                    <span
+                      key={c}
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        background: "rgba(201, 138, 43, 0.12)",
+                        color: "#8C590E",
+                        border: "1px solid rgba(201, 138, 43, 0.3)",
+                        padding: "2px 7px",
+                        borderRadius: 12,
+                        textTransform: "capitalize",
+                      }}
+                    >
+                      ✓ {tCrop ? tCrop(c) : c}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* Preferred Centre */}
+              {(profile?.preferredCentreName || profile?.preferredCentre) && (
+                <div style={{ marginTop: 2 }}>
+                  <div style={{ color: "#6A6553", marginBottom: 2 }}>🏢 {t("profile_pref_centre")}</div>
+                  <div
+                    style={{
+                      fontWeight: 600,
+                      color: "var(--field)",
+                      fontSize: 11,
+                      lineHeight: 1.3,
+                      background: "rgba(31, 61, 43, 0.04)",
+                      padding: "5px 8px",
+                      borderRadius: 6,
+                      border: "1px solid var(--line)",
+                    }}
+                  >
+                    {profile.preferredCentreName || (tCentre ? tCentre(profile.preferredCentre) : profile.preferredCentre)}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

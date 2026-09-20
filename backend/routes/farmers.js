@@ -1,6 +1,11 @@
 import { Router } from "express";
 import store from "../data/store.js";
 import { sendSMS } from "../utils/sms.js";
+import {
+  normalizeIndianMobile,
+  validateIndianMobile,
+  INDIAN_MOBILE_ERROR_MSG,
+} from "../utils/phone.js";
 
 const router = Router();
 
@@ -83,23 +88,99 @@ router.get("/centres/:id/public-queue", (req, res) => {
   });
 });
 
-// POST /api/farmers/login
-router.post("/farmers/login", (req, res) => {
-  const { name, phone, email } = req.body;
+// POST /api/farmers/register-account
+router.post("/farmers/register-account", (req, res) => {
+  const {
+    name,
+    phone,
+    alternatePhone,
+    email,
+    district,
+    area,
+    village,
+    crops,
+    primaryCrop,
+    preferredCentreId,
+  } = req.body;
 
-  if (!name || (!phone && !email)) {
-    return res.status(400).json({ error: "Name and either phone or email are required" });
+  if (!name || !phone) {
+    return res.status(400).json({ error: "Full Name and Primary Mobile Number are required." });
   }
 
-  const identifier = phone || email;
-  const existing = store.getFarmersByIdentifier(identifier);
-  const isNewFarmer = existing.length === 0;
+  if (!district) {
+    return res.status(400).json({ error: "District is mandatory. Please select Thanjavur, Villupuram, or Cuddalore." });
+  }
+
+  if (!store.resolveDistrictCode(district)) {
+    return res.status(400).json({ error: "Invalid district. Please select Thanjavur, Villupuram, or Cuddalore." });
+  }
+
+  try {
+    const registered = store.registerFarmerAccount({
+      name,
+      phone,
+      alternatePhone,
+      email,
+      district,
+      area,
+      village,
+      crops,
+      primaryCrop,
+      preferredCentreId,
+    });
+
+    const profile = store.getFarmerProfile(registered.farmerId, registered.name);
+
+    return res.status(201).json({
+      success: true,
+      message: `Registration successful. Your official Farmer ID is ${registered.farmerId}`,
+      farmer: registered,
+      profile,
+    });
+  } catch (err) {
+    if (err.status === 409 || err.code === "ALREADY_REGISTERED") {
+      return res.status(409).json({
+        error: err.message,
+        code: "ALREADY_REGISTERED",
+        existingFarmerId: err.existingFarmerId || null,
+      });
+    }
+    return res.status(err.status || 400).json({ error: err.message || "Failed to register farmer account." });
+  }
+});
+
+// POST /api/farmers/login
+router.post("/farmers/login", (req, res) => {
+  const { name, phone, email, farmerId, identityType, identityValue } = req.body;
+
+  const authResult = store.authenticateFarmerLogin({ name, phone, email, farmerId, identityType, identityValue });
+
+  if (!authResult.authenticated) {
+    return res.status(401).json({
+      error: authResult.error || "We couldn't find a registered farmer account matching these details.",
+      invalidDetails: true,
+      message: authResult.message || "We couldn't find a registered farmer account matching these details.",
+    });
+  }
+
+  const { farmer, profile } = authResult;
 
   res.json({
-    name: name.trim(),
-    phone: phone ? String(phone).trim() : null,
-    email: email ? String(email).trim() : null,
-    isNewFarmer,
+    success: true,
+    name: farmer.name || name || "Farmer",
+    phone: farmer.phone || (phone ? String(phone).trim() : null),
+    alternatePhone: farmer.alternatePhone || profile?.alternatePhone || null,
+    email: farmer.email || (email ? String(email).trim() : null),
+    farmerId: farmer.farmerId || profile?.farmerId || null,
+    district: farmer.district || profile?.district || null,
+    districtCode: farmer.districtCode || profile?.districtCode || null,
+    area: farmer.area || profile?.area || null,
+    village: farmer.village || profile?.village || null,
+    crops: farmer.crops || profile?.crops || (farmer.primaryCrop ? [farmer.primaryCrop] : []),
+    primaryCrop: farmer.primaryCrop || profile?.primaryCrop || null,
+    preferredCentreId: farmer.preferredCentreId || profile?.preferredCentreId || null,
+    preferredCentreName: farmer.preferredCentreName || profile?.preferredCentreName || null,
+    profile,
   });
 });
 
@@ -138,6 +219,16 @@ router.post("/farmers/join-live-queue", (req, res) => {
   if (!name || (!phone && !email) || !crop || rawQty === undefined || rawQty === null || rawQty === "" || !centreId) {
     return res.status(400).json({ error: "Missing required fields" });
   }
+
+  let normalizedLivePhone = null;
+  if (phone) {
+    const phoneValidation = validateIndianMobile(phone);
+    if (!phoneValidation.isValid) {
+      return res.status(400).json({ error: phoneValidation.error || INDIAN_MOBILE_ERROR_MSG });
+    }
+    normalizedLivePhone = phoneValidation.normalized;
+  }
+
   const centre = store.getCentre(centreId);
   if (!centre) {
     return res.status(404).json({ error: "Centre not found" });
@@ -146,7 +237,7 @@ router.post("/farmers/join-live-queue", (req, res) => {
   try {
     const farmer = store.registerFarmer({
       name: name.trim(),
-      phone: phone ? String(phone).trim() : null,
+      phone: normalizedLivePhone,
       email: email ? String(email).trim() : null,
       crop,
       quantity,
@@ -208,6 +299,16 @@ router.post("/farmers/register", (req, res) => {
   if (!name || (!phone && !email) || !crop || rawQty === undefined || rawQty === null || rawQty === "" || !centreId) {
     return res.status(400).json({ error: "Missing required fields" });
   }
+
+  let normalizedSlottedPhone = null;
+  if (phone) {
+    const phoneValidation = validateIndianMobile(phone);
+    if (!phoneValidation.isValid) {
+      return res.status(400).json({ error: phoneValidation.error || INDIAN_MOBILE_ERROR_MSG });
+    }
+    normalizedSlottedPhone = phoneValidation.normalized;
+  }
+
   if (!store.getCentre(centreId)) {
     return res.status(404).json({ error: "Centre not found" });
   }
@@ -215,7 +316,7 @@ router.post("/farmers/register", (req, res) => {
   try {
     const farmer = store.registerFarmer({
       name: name.trim(),
-      phone: phone ? String(phone).trim() : null,
+      phone: normalizedSlottedPhone,
       email: email ? String(email).trim() : null,
       crop,
       quantity,
@@ -259,11 +360,15 @@ router.get("/farmers/:id/status", (req, res) => {
   const centre = store.getCentre(farmer.centreId);
   const queue = store.getQueueForCentre(farmer.centreId);
   const position = queue.findIndex((f) => f.id === farmer.id);
+  const queuePosition = position === -1 ? null : position + 1;
   const waitMinutes = store.estimateWaitMinutes(farmer);
   const crowdStatus = store.getCrowdStatus(farmer.centreId);
 
+  // Trigger strict queue notifications (Position 5 and Position 1) if applicable
+  store.checkAndTriggerQueueNotification(farmer, queuePosition);
+
   let safeFarmer = { ...farmer };
-  if (farmer.status === store.STATUS.PAID && farmer.receipt && farmer.receipt.receiptStatus !== "released") {
+  if (farmer.receipt && farmer.receipt.receiptStatus !== "released") {
     safeFarmer.receipt = {
       receiptId: farmer.receipt.receiptId,
       receiptStatus: "pending_release",
@@ -274,7 +379,7 @@ router.get("/farmers/:id/status", (req, res) => {
   res.json({
     farmer: safeFarmer,
     centre,
-    queuePosition: position === -1 ? null : position + 1,
+    queuePosition,
     queueLength: queue.length,
     estimatedWaitMinutes: waitMinutes,
     crowdStatus,
@@ -323,7 +428,7 @@ function enrichFarmersList(farmerRecords) {
   return farmerRecords
     .map((f) => {
       const centre = store.getCentre(f.centreId);
-      const isPendingReceipt = f.status === store.STATUS.PAID && f.receipt && f.receipt.receiptStatus !== "released";
+      const isPendingReceipt = f.receipt && f.receipt.receiptStatus !== "released";
       let receiptData = f.receipt;
       if (isPendingReceipt) {
         receiptData = {

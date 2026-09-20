@@ -18,7 +18,19 @@ const NEXT_LABEL = {
   payment_initiated: "Mark Paid",
 };
 
-export default function Admin({ onLogout }) {
+function formatReceiptDateTime(timestamp) {
+  if (!timestamp) return "";
+  const d = new Date(timestamp);
+  if (isNaN(d.getTime())) return String(timestamp);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const hours = String(d.getHours()).padStart(2, "0");
+  const mins = String(d.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${mins}`;
+}
+
+export default function Admin({ onLogout, adminToken }) {
   const { t = (k) => k } = useLanguage() || {};
   const [adminTab, setAdminTab] = useState("queues"); // "queues" | "tickets"
   const [queueTab, setQueueTab] = useState("live"); // "live" | "today" | "upcoming"
@@ -55,6 +67,22 @@ export default function Admin({ onLogout }) {
   // Review & Release Payment Receipt Modal State
   const [reviewingReceiptFarmer, setReviewingReceiptFarmer] = useState(null);
   const [releasingReceipt, setReleasingReceipt] = useState(false);
+  const [releaseAdjustmentReason, setReleaseAdjustmentReason] = useState("");
+
+  useEffect(() => {
+    if (reviewingReceiptFarmer) {
+      setReleaseAdjustmentReason(
+        reviewingReceiptFarmer.receipt?.adjustmentReason ||
+        reviewingReceiptFarmer.adjustmentReason ||
+        reviewingReceiptFarmer.receipt?.discrepancyReason ||
+        reviewingReceiptFarmer.quantityDiscrepancyReason ||
+        reviewingReceiptFarmer.discrepancyReason ||
+        ""
+      );
+    } else {
+      setReleaseAdjustmentReason("");
+    }
+  }, [reviewingReceiptFarmer]);
 
   // Permanent Procurement Records (Audit Snapshots) State
   const [recordsResult, setRecordsResult] = useState({
@@ -180,10 +208,36 @@ export default function Admin({ onLogout }) {
   }
 
   async function handleReleaseReceipt(farmerId) {
+    if (!reviewingReceiptFarmer) return;
+    const verifiedKg = Number(
+      reviewingReceiptFarmer.receipt?.verifiedQuantityKg ??
+      reviewingReceiptFarmer.verifiedQuantityKg ??
+      reviewingReceiptFarmer.quantityKg ??
+      0
+    );
+    const declaredKg = Number(
+      reviewingReceiptFarmer.declaredQuantityKg ??
+      reviewingReceiptFarmer.quantityKg ??
+      0
+    );
+    const hasQuantityMismatch = Math.abs(verifiedKg - declaredKg) > 0.01;
+
+    if (hasQuantityMismatch && !releaseAdjustmentReason.trim()) {
+      setError("Verified quantity differs from declared quantity. Please provide a reason for adjustment before releasing receipt.");
+      return;
+    }
+
     setReleasingReceipt(true);
     setError("");
     try {
-      await api.releaseFarmerReceipt(farmerId, { adminName: "Centre Admin" });
+      await api.releaseFarmerReceipt(
+        farmerId,
+        {
+          adminName: "Centre Admin",
+          adjustmentReason: hasQuantityMismatch ? releaseAdjustmentReason.trim() : (releaseAdjustmentReason.trim() || undefined),
+        },
+        adminToken
+      );
       setAlertToast(`Payment receipt released to farmer (${farmerId}). Farmer notified via SMS and App.`);
       setTimeout(() => setAlertToast(""), 6000);
       setReviewingReceiptFarmer(null);
@@ -1667,6 +1721,11 @@ export default function Admin({ onLogout }) {
                             <div style={{ fontSize: 11, color: "#6A6553" }}>
                               {qty.quintal ? `${qty.quintal} Qtl` : ""} {qty.verifiedQuantity ? `(${qty.verifiedQuantity} ${qty.unit || "bags"})` : ""}
                             </div>
+                            {(r.adjustmentReason || r.receipt?.adjustmentReason) && (
+                              <div style={{ fontSize: 10, color: "#B45309", marginTop: 2, fontWeight: 600 }} title={r.adjustmentReason || r.receipt?.adjustmentReason}>
+                                ⚠️ Adjusted: {r.adjustmentReason || r.receipt?.adjustmentReason}
+                              </div>
+                            )}
                           </td>
 
                           <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
@@ -1868,13 +1927,13 @@ export default function Admin({ onLogout }) {
                     <span className="receipt-item-label">Procurement Centre</span>
                     <span className="receipt-item-val">{r.centreName || r.centreId}</span>
                   </div>
-                  {receipt.discrepancyReason && (
+                  {(receipt.adjustmentReason || r.adjustmentReason || receipt.discrepancyReason) && (
                     <div className="receipt-item" style={{ gridColumn: "1 / -1", background: "rgba(201, 138, 43, 0.08)", padding: "8px 10px", borderRadius: 6 }}>
                       <span className="receipt-item-label" style={{ color: "#B45309", fontWeight: 700 }}>
-                        Discrepancy Justification:
+                        Reason for Adjustment:
                       </span>
                       <span className="receipt-item-val" style={{ color: "#78350F" }}>
-                        "{receipt.discrepancyReason}"
+                        "{receipt.adjustmentReason || r.adjustmentReason || receipt.discrepancyReason}"
                       </span>
                     </div>
                   )}
@@ -1892,6 +1951,22 @@ export default function Admin({ onLogout }) {
                   <div className="receipt-total-amount">
                     {new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(totalAmount)}
                   </div>
+                </div>
+
+                <div
+                  className="receipt-process-completed"
+                  style={{
+                    marginTop: 10,
+                    paddingTop: 8,
+                    borderTop: "1px dashed var(--line)",
+                    fontSize: 12,
+                    color: "#6A6553",
+                    textAlign: "center",
+                    fontFamily: "var(--font-mono)",
+                    fontWeight: 600,
+                  }}
+                >
+                  Process Completed: {formatReceiptDateTime(receipt.releasedAt || receipt.processCompletedAt || r.paymentTimestamp || r.procurementTimestamp || r.paymentDate || r.procurementDate)}
                 </div>
               </div>
 
@@ -1943,6 +2018,23 @@ export default function Admin({ onLogout }) {
         const roundedDiffPercent = Math.round(diffPercent * 10) / 10;
         const isAboveThreshold = diffPercent > 15;
         const hasDiff = diffKg > 0.01;
+
+        // Calculate rate and estimated total payout preview
+        let previewRatePerKg = 23.69;
+        if (verifyingFarmer.crop === "Paddy") {
+          previewRatePerKg = (verifyForm.varietySelection === "Fine" || verifyForm.varietySelection === "Grade A") ? 24.00 : 23.69;
+        } else if (verifyingFarmer.crop === "Wheat") {
+          previewRatePerKg = 25.85;
+        } else if (verifyingFarmer.crop === "Maize") {
+          previewRatePerKg = 24.00;
+        } else if (verifyingFarmer.crop === "Pulses") {
+          previewRatePerKg = 80.00;
+        } else if (verifyingFarmer.crop === "Groundnut") {
+          previewRatePerKg = 67.83;
+        } else if (verifyingFarmer.crop === "Cotton") {
+          previewRatePerKg = 77.10;
+        }
+        const previewTotalPayout = Math.round(verifiedKg * previewRatePerKg * 100) / 100;
 
         const isFormValid = vQty > 0 && (!isAboveThreshold || (verifyForm.discrepancyReason && verifyForm.discrepancyReason.trim().length > 0));
 
@@ -2109,6 +2201,15 @@ export default function Admin({ onLogout }) {
                   <div style={{ fontSize: 13, color: isAboveThreshold ? "var(--danger)" : "#4A4636", fontWeight: isAboveThreshold ? 700 : 500 }}>
                     Difference vs Declared: {hasDiff ? `${diffKg.toLocaleString("en-IN")} KG (${roundedDiffPercent}% difference)` : "0 KG (0% difference)"}
                   </div>
+
+                  {verifiedKg > 0 && (
+                    <div style={{ fontSize: 13, color: "var(--ink)", marginTop: 8, paddingTop: 8, borderTop: "1px dashed rgba(35, 41, 31, 0.2)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span>Applicable Rate: <strong>₹{previewRatePerKg.toFixed(2)}/KG</strong> (₹{(previewRatePerKg * 100).toFixed(2)}/Qtl)</span>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: "var(--field)" }}>
+                        Estimated Payout: {new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(previewTotalPayout)}
+                      </span>
+                    </div>
+                  )}
 
                   {isAboveThreshold && (
                     <div
@@ -2419,11 +2520,66 @@ export default function Admin({ onLogout }) {
                     </div>
                   </div>
                 </div>
-                {reviewingReceiptFarmer.discrepancyReason && (
-                  <div style={{ marginTop: 8, fontSize: 12, color: "#B45309", background: "rgba(245, 158, 11, 0.1)", padding: "4px 8px", borderRadius: 4 }}>
-                    <strong>Discrepancy Note:</strong> {reviewingReceiptFarmer.discrepancyReason}
-                  </div>
-                )}
+                {(() => {
+                  const verifiedKg = Number(
+                    reviewingReceiptFarmer.receipt?.verifiedQuantityKg ??
+                    reviewingReceiptFarmer.verifiedQuantityKg ??
+                    reviewingReceiptFarmer.quantityKg ??
+                    0
+                  );
+                  const declaredKg = Number(
+                    reviewingReceiptFarmer.declaredQuantityKg ??
+                    reviewingReceiptFarmer.quantityKg ??
+                    0
+                  );
+                  const hasMismatch = Math.abs(verifiedKg - declaredKg) > 0.01;
+                  const isReleased = reviewingReceiptFarmer.receipt?.receiptStatus === "released";
+
+                  if (hasMismatch) {
+                    if (isReleased) {
+                      return (
+                        <div style={{ marginTop: 10, fontSize: 12, color: "#B45309", background: "rgba(245, 158, 11, 0.1)", padding: "8px 12px", borderRadius: 6, border: "1px solid rgba(245, 158, 11, 0.25)" }}>
+                          <strong>Reason for Adjustment:</strong> {reviewingReceiptFarmer.receipt?.adjustmentReason || reviewingReceiptFarmer.adjustmentReason || reviewingReceiptFarmer.receipt?.discrepancyReason || reviewingReceiptFarmer.quantityDiscrepancyReason || "Weighment adjustment"}
+                        </div>
+                      );
+                    }
+                    return (
+                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed var(--line)" }}>
+                        <label htmlFor="adjustment-reason-input" style={{ fontSize: 12, fontWeight: 700, color: "#B45309", display: "block", marginBottom: 4 }}>
+                          Reason for Adjustment *
+                        </label>
+                        <p style={{ fontSize: 11, color: "#6A6553", margin: "0 0 6px 0", lineHeight: 1.4 }}>
+                          Verified quantity differs from declared quantity. Please specify the reason (e.g. moisture content, foreign matter, quality grade mismatch, weighing discrepancy).
+                        </p>
+                        <textarea
+                          id="adjustment-reason-input"
+                          rows={2}
+                          value={releaseAdjustmentReason}
+                          onChange={(e) => setReleaseAdjustmentReason(e.target.value)}
+                          placeholder="Enter reason for adjustment (required)..."
+                          style={{
+                            width: "100%",
+                            padding: "8px 10px",
+                            borderRadius: 6,
+                            border: `1px solid ${!releaseAdjustmentReason.trim() ? "#e11d48" : "var(--line)"}`,
+                            fontSize: 12,
+                            fontFamily: "inherit",
+                            resize: "vertical",
+                            boxSizing: "border-box",
+                            background: "#fff",
+                          }}
+                          required
+                        />
+                        {!releaseAdjustmentReason.trim() && (
+                          <div style={{ fontSize: 11, color: "#e11d48", marginTop: 3 }}>
+                            * Reason is required to release receipt when quantities differ.
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
               </div>
 
               <div
@@ -2450,6 +2606,24 @@ export default function Admin({ onLogout }) {
               {reviewingReceiptFarmer.receipt?.paymentRef && (
                 <div style={{ marginTop: 8, fontSize: 11, color: "#6A6553" }}>
                   Payment Ref: <code>{reviewingReceiptFarmer.receipt.paymentRef}</code>
+                </div>
+              )}
+
+              {reviewingReceiptFarmer.receipt?.receiptStatus === "released" && (
+                <div
+                  className="receipt-process-completed"
+                  style={{
+                    marginTop: 10,
+                    paddingTop: 8,
+                    borderTop: "1px dashed var(--line)",
+                    fontSize: 12,
+                    color: "#6A6553",
+                    textAlign: "center",
+                    fontFamily: "var(--font-mono)",
+                    fontWeight: 600,
+                  }}
+                >
+                  Process Completed: {formatReceiptDateTime(reviewingReceiptFarmer.receipt.releasedAt || reviewingReceiptFarmer.receipt.processCompletedAt)}
                 </div>
               )}
             </div>
@@ -2489,15 +2663,41 @@ export default function Admin({ onLogout }) {
                   📢 <strong>Note for Admin:</strong> Releasing this receipt makes it immediately accessible to the farmer on their Status & History pages, triggers an SMS/App notification, and stores a permanent immutable procurement audit record.
                 </div>
                 <div style={{ display: "flex", gap: 10 }}>
-                  <button
-                    className="btn primary"
-                    type="button"
-                    disabled={releasingReceipt}
-                    onClick={() => handleReleaseReceipt(reviewingReceiptFarmer.id)}
-                    style={{ flex: 1, background: "var(--field)", borderColor: "var(--field)" }}
-                  >
-                    {releasingReceipt ? "Releasing Receipt..." : `🚀 ${t("admin_release_receipt_btn") || "Release Receipt to Farmer"}`}
-                  </button>
+                  {(() => {
+                    const verifiedKg = Number(
+                      reviewingReceiptFarmer.receipt?.verifiedQuantityKg ??
+                      reviewingReceiptFarmer.verifiedQuantityKg ??
+                      reviewingReceiptFarmer.quantityKg ??
+                      0
+                    );
+                    const declaredKg = Number(
+                      reviewingReceiptFarmer.declaredQuantityKg ??
+                      reviewingReceiptFarmer.quantityKg ??
+                      0
+                    );
+                    const hasMismatch = Math.abs(verifiedKg - declaredKg) > 0.01;
+                    const isBlocked = releasingReceipt || (hasMismatch && !releaseAdjustmentReason.trim());
+
+                    return (
+                      <button
+                        className="btn primary"
+                        type="button"
+                        id="admin-release-receipt-btn"
+                        disabled={isBlocked}
+                        onClick={() => handleReleaseReceipt(reviewingReceiptFarmer.id)}
+                        style={{
+                          flex: 1,
+                          background: isBlocked ? "#9ca3af" : "var(--field)",
+                          borderColor: isBlocked ? "#9ca3af" : "var(--field)",
+                          cursor: isBlocked ? "not-allowed" : "pointer",
+                          opacity: isBlocked ? 0.7 : 1,
+                        }}
+                        title={hasMismatch && !releaseAdjustmentReason.trim() ? "Please enter a reason for adjustment before releasing receipt" : ""}
+                      >
+                        {releasingReceipt ? "Releasing Receipt..." : `🚀 ${t("admin_release_receipt_btn") || "Release Receipt to Farmer"}`}
+                      </button>
+                    );
+                  })()}
                   <button
                     className="btn secondary"
                     type="button"

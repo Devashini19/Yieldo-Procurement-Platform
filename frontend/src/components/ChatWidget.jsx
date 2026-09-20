@@ -7,7 +7,7 @@ const SpeechRecognition =
     ? window.SpeechRecognition || window.webkitSpeechRecognition
     : null;
 
-export default function ChatWidget() {
+export default function ChatWidget({ farmerUser }) {
   const { lang, t, faqs } = useLanguage();
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState("");
@@ -18,15 +18,72 @@ export default function ChatWidget() {
   const [voiceError, setVoiceError] = useState("");
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [showFaqs, setShowFaqs] = useState(true);
+  const [voices, setVoices] = useState([]);
 
   const messagesEndRef = useRef(null);
   const recognitionRef = useRef(null);
+  const currentUtteranceRef = useRef(null);
 
   const isSpeechSupported = !!SpeechRecognition;
 
-  // Initialize with welcome message on mount
+  const farmerIdentifier = farmerUser?.identifier || farmerUser?.phone || farmerUser?.email;
+  const farmerName = farmerUser?.name;
+
+  // Initialize with welcome message on mount and sync on language change if chat not started
   useEffect(() => {
-    setMessages([{ sender: "bot", text: t("chat_welcome_msg") }]);
+    setMessages((prev) => {
+      if (!prev || prev.length === 0) {
+        return [{ sender: "bot", text: t("chat_welcome_msg") }];
+      }
+      if (prev.length === 1 && prev[0].sender === "bot") {
+        return [{ sender: "bot", text: t("chat_welcome_msg") }];
+      }
+      return prev;
+    });
+  }, [lang, t]);
+
+  const langRef = useRef(lang);
+  useEffect(() => {
+    langRef.current = lang;
+  }, [lang]);
+
+  // Listen to speech synthesis voices
+  useEffect(() => {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      const updateVoices = () => {
+        const available = window.speechSynthesis.getVoices() || [];
+        if (available.length > 0) {
+          setVoices(available);
+          console.log(
+            `[SpeechSynthesis] Loaded ${available.length} voices on device:`,
+            available.map((v) => `${v.name} [${v.lang}]${v.default ? " (default)" : ""}`)
+          );
+          const tamilVoice = available.find(
+            (v) => (v.lang && /^ta/i.test(v.lang)) || /tamil/i.test(v.name) || /தமிழ்/i.test(v.name)
+          );
+          if (tamilVoice) {
+            console.log("[SpeechSynthesis] Dedicated Tamil voice found:", tamilVoice.name, `[${tamilVoice.lang}]`);
+          } else {
+            console.warn(
+              "[SpeechSynthesis] Notice: No dedicated Tamil voice pack (ta-IN) detected in getVoices(). " +
+              "Tamil responses will skip audio playback to prevent English voice mispronunciation; text will display visibly."
+            );
+          }
+        }
+      };
+
+      updateVoices();
+
+      window.speechSynthesis.onvoiceschanged = updateVoices;
+      window.speechSynthesis.addEventListener("voiceschanged", updateVoices);
+
+      return () => {
+        window.speechSynthesis.removeEventListener("voiceschanged", updateVoices);
+        if (window.speechSynthesis.onvoiceschanged === updateVoices) {
+          window.speechSynthesis.onvoiceschanged = null;
+        }
+      };
+    }
   }, []);
 
   useEffect(() => {
@@ -36,37 +93,158 @@ export default function ChatWidget() {
   }, [messages, isOpen, isListening, voiceError, showFaqs]);
 
   const speakReply = useCallback(
-    (text) => {
+    (text, overrideLang) => {
       if (!voiceReplyEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) {
         return;
       }
 
-      try {
-        window.speechSynthesis.cancel();
+      const getVoicesList = () => {
+        const direct = window.speechSynthesis.getVoices();
+        if (direct && direct.length > 0) return direct;
+        if (voices && voices.length > 0) return voices;
+        return [];
+      };
 
-        const utterance = new SpeechSynthesisUtterance(text);
-        const targetLocale = lang === "ta" ? "ta-IN" : "en-IN";
-        utterance.lang = targetLocale;
+      const doSpeak = (availableVoices) => {
+        try {
+          window.speechSynthesis.cancel();
 
-        const voices = window.speechSynthesis.getVoices();
-        const matchVoice =
-          voices.find((v) => v.lang === targetLocale) ||
-          voices.find((v) => v.lang.startsWith(lang === "ta" ? "ta" : "en"));
+          // Strip markdown symbols and clean whitespace for clearer speech
+          const cleanText = text ? text.replace(/[*#`_•]/g, " ").replace(/\s+/g, " ").trim() : "";
+          if (!cleanText) {
+            setIsSpeaking(false);
+            return;
+          }
 
-        if (matchVoice) {
-          utterance.voice = matchVoice;
+          // Evaluate current language dynamically on every message
+          const activeLang = overrideLang || langRef.current || lang;
+          const isTamilText = /[\u0B80-\u0BFF]/.test(cleanText);
+          const isTamil = activeLang === "ta" || isTamilText;
+
+          // Always log available voices list (name + lang) as requested
+          console.log(
+            `[SpeechSynthesis] Available voices list (${availableVoices.length}):`,
+            availableVoices.map((v) => `${v.name} (${v.lang})`)
+          );
+          console.log(
+            `[SpeechSynthesis] doSpeak called -> activeLang: "${activeLang}", isTamilText: ${isTamilText}, final isTamil: ${isTamil}`
+          );
+
+          if (isTamil) {
+            // Explicitly search for a Tamil voice (ta-IN or close variant)
+            const matchTamilVoice =
+              availableVoices.find((v) => v.lang && /^ta[-_]IN$/i.test(v.lang)) ||
+              availableVoices.find((v) => v.lang && /^ta[-_]/i.test(v.lang)) ||
+              availableVoices.find((v) => v.lang && /^ta$/i.test(v.lang)) ||
+              availableVoices.find((v) => /tamil/i.test(v.name) || /தமிழ்/i.test(v.name) || /tamil/i.test(v.lang));
+
+            if (!matchTamilVoice) {
+              console.warn(
+                "[SpeechSynthesis] Notice: No dedicated Tamil voice pack (ta-IN) installed on this browser/OS. " +
+                "Skipping audio playback for Tamil to prevent English voice mispronunciation. " +
+                "Tamil text response remains clearly visible in the chat."
+              );
+              console.log("[SpeechSynthesis Speak Debug - Tamil]", {
+                text: cleanText,
+                utteranceLang: "ta-IN",
+                voiceName: "none (Tamil voice not installed - skipped audio fallback)",
+                voiceLang: "none",
+                hasDedicatedVoice: false,
+                action: "graceful silent fallback (text only)",
+              });
+              setIsSpeaking(false);
+              return;
+            }
+
+            const utterance = new SpeechSynthesisUtterance(cleanText);
+            utterance.text = cleanText;
+            utterance.lang = "ta-IN";
+            utterance.rate = 0.92;
+            utterance.pitch = 1.0;
+            utterance.voice = matchTamilVoice;
+            console.log("[SpeechSynthesis] Selected dedicated Tamil voice:", matchTamilVoice.name, `(${matchTamilVoice.lang})`);
+
+            currentUtteranceRef.current = utterance;
+
+            utterance.onstart = () => setIsSpeaking(true);
+            utterance.onend = () => setIsSpeaking(false);
+            utterance.onerror = (e) => {
+              console.warn("[SpeechSynthesis] Utterance error:", e);
+              setIsSpeaking(false);
+            };
+
+            console.log("[SpeechSynthesis Speak Debug - Tamil]", {
+              text: utterance.text,
+              utteranceLang: utterance.lang,
+              voiceName: utterance.voice.name,
+              voiceLang: utterance.voice.lang,
+              hasDedicatedVoice: true,
+              action: "speaking via Tamil voice",
+            });
+
+            window.speechSynthesis.resume();
+            window.speechSynthesis.speak(utterance);
+          } else {
+            // English voice playback
+            const utterance = new SpeechSynthesisUtterance(cleanText);
+            utterance.text = cleanText;
+            utterance.lang = "en-IN";
+            utterance.rate = 1.0;
+
+            const matchEnglishVoice =
+              availableVoices.find((v) => v.lang && /^en[-_]IN$/i.test(v.lang)) ||
+              availableVoices.find((v) => v.lang && /^en[-_]/i.test(v.lang)) ||
+              availableVoices.find((v) => v.lang && /^en$/i.test(v.lang)) ||
+              availableVoices.find((v) => /india/i.test(v.name) || /heera/i.test(v.name) || /ravi/i.test(v.name));
+
+            if (matchEnglishVoice) {
+              utterance.voice = matchEnglishVoice;
+              console.log("[SpeechSynthesis] Selected English voice:", matchEnglishVoice.name, `(${matchEnglishVoice.lang})`);
+            }
+
+            currentUtteranceRef.current = utterance;
+
+            utterance.onstart = () => setIsSpeaking(true);
+            utterance.onend = () => setIsSpeaking(false);
+            utterance.onerror = (e) => {
+              console.warn("[SpeechSynthesis] Utterance error:", e);
+              setIsSpeaking(false);
+            };
+
+            console.log("[SpeechSynthesis Speak Debug - English]", {
+              text: utterance.text,
+              utteranceLang: utterance.lang,
+              voiceName: utterance.voice ? utterance.voice.name : "none (browser default)",
+              voiceLang: utterance.voice ? utterance.voice.lang : "none (browser default)",
+              hasDedicatedVoice: !!utterance.voice,
+            });
+
+            window.speechSynthesis.resume();
+            window.speechSynthesis.speak(utterance);
+          }
+        } catch (err) {
+          console.error("[SpeechSynthesis] Speak exception:", err);
+          setIsSpeaking(false);
         }
+      };
 
-        utterance.onstart = () => setIsSpeaking(true);
-        utterance.onend = () => setIsSpeaking(false);
-        utterance.onerror = () => setIsSpeaking(false);
-
-        window.speechSynthesis.speak(utterance);
-      } catch {
-        setIsSpeaking(false);
+      const currentVoices = getVoicesList();
+      if (currentVoices.length > 0) {
+        doSpeak(currentVoices);
+      } else {
+        // If voices not yet populated, wait for voiceschanged or brief timeout
+        let handled = false;
+        const onVoicesReady = () => {
+          if (handled) return;
+          handled = true;
+          const loaded = getVoicesList();
+          doSpeak(loaded);
+        };
+        window.speechSynthesis.addEventListener("voiceschanged", onVoicesReady, { once: true });
+        setTimeout(onVoicesReady, 250);
       }
     },
-    [voiceReplyEnabled, lang]
+    [voiceReplyEnabled, lang, voices]
   );
 
   async function sendUserMessage(text) {
@@ -79,31 +257,35 @@ export default function ChatWidget() {
     setInput("");
     setLoading(true);
 
+    const activeCurrentLang = langRef.current || lang;
+
     try {
-      // Pass the current language from LanguageContext dynamically
+      // Pass the current language from LanguageContext dynamically along with authenticated farmer context
       const data = await api.sendChatbotMessage({
         message: userMessage,
-        language: lang,
+        language: activeCurrentLang,
         history: newHistory,
+        farmerIdentifier,
+        farmerName,
       });
 
-      const replyText = data.reply || "Thank you for reaching out.";
+      const replyText = data.reply || (activeCurrentLang === "ta" ? "உங்கள் கேள்விக்கு நன்றி." : "Thank you for reaching out.");
       setMessages((prev) => [
         ...prev,
         { sender: "bot", text: replyText },
       ]);
 
-      speakReply(replyText);
+      speakReply(replyText, activeCurrentLang);
     } catch {
       const fallbackText =
-        lang === "ta"
+        activeCurrentLang === "ta"
           ? "மன்னிக்கவும், தகவலைப் பெறுவதில் பிழை ஏற்பட்டது. சிறிது நேரம் கழித்து மீண்டும் முயற்சிக்கவும்."
           : "Sorry, could not connect to assistant. Please try again shortly.";
       setMessages((prev) => [
         ...prev,
         { sender: "bot", text: fallbackText },
       ]);
-      speakReply(fallbackText);
+      speakReply(fallbackText, activeCurrentLang);
     } finally {
       setLoading(false);
     }
@@ -115,13 +297,14 @@ export default function ChatWidget() {
   }
 
   function handleFaqClick(faq) {
+    const activeCurrentLang = langRef.current || lang;
     setVoiceError("");
     setMessages((prev) => [
       ...prev,
       { sender: "user", text: faq.q },
       { sender: "bot", text: faq.a },
     ]);
-    speakReply(faq.a);
+    speakReply(faq.a, activeCurrentLang);
   }
 
   function startListening() {
@@ -141,9 +324,10 @@ export default function ChatWidget() {
     setVoiceError("");
 
     try {
+      const activeCurrentLang = langRef.current || lang;
       const recognition = new SpeechRecognition();
       recognitionRef.current = recognition;
-      recognition.lang = lang === "ta" ? "ta-IN" : "en-IN";
+      recognition.lang = activeCurrentLang === "ta" ? "ta-IN" : "en-IN";
       recognition.interimResults = false;
       recognition.maxAlternatives = 1;
 

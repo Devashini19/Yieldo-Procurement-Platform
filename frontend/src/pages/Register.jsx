@@ -3,6 +3,12 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../api.js";
 import { useLanguage } from "../i18n.js";
 import { useConnectivity } from "../context/ConnectivityContext.jsx";
+import CentreLocationMap from "../components/CentreLocationMap.jsx";
+import {
+  normalizeIndianMobile,
+  validateIndianMobile,
+  getImmediatePhoneFeedback,
+} from "../utils/phone.js";
 
 const CROP_OPTIONS = ["Paddy", "Wheat", "Pulses", "Maize", "Groundnut", "Cotton"];
 
@@ -203,8 +209,12 @@ export default function Register({ farmerUser }) {
   }
 
   function handlePhoneChange(e) {
-    const cleanPhone = e.target.value.replace(/\D/g, "").slice(0, 10);
-    setForm((f) => ({ ...f, phone: cleanPhone }));
+    let raw = e.target.value;
+    let clean = raw.replace(/[^\d+\s\-]/g, "").slice(0, 15);
+    if (clean.indexOf("+") > 0) {
+      clean = clean[0] === "+" ? "+" + clean.slice(1).replace(/\+/g, "") : clean.replace(/\+/g, "");
+    }
+    setForm((f) => ({ ...f, phone: clean }));
     if (error) setError("");
   }
 
@@ -218,13 +228,16 @@ export default function Register({ farmerUser }) {
       return;
     }
 
-    // Phone is required if no email exists; if phone is entered, it must be exactly 10 digits
     const hasEmail = Boolean(farmerUser?.email);
-    if (!hasEmail && form.phone.length !== 10) {
-      setError(t("err_phone_invalid"));
-      return;
-    }
-    if (form.phone && form.phone.length > 0 && form.phone.length !== 10) {
+    let normalizedPhone = null;
+    if (form.phone && form.phone.trim()) {
+      const phoneValidation = validateIndianMobile(form.phone, t("err_phone_invalid"));
+      if (!phoneValidation.isValid) {
+        setError(phoneValidation.error);
+        return;
+      }
+      normalizedPhone = phoneValidation.normalized;
+    } else if (!hasEmail) {
       setError(t("err_phone_invalid"));
       return;
     }
@@ -255,7 +268,7 @@ export default function Register({ farmerUser }) {
 
     const registrationPayload = {
       name: trimmedName,
-      phone: form.phone || null,
+      phone: normalizedPhone,
       email: farmerUser?.email || null,
       crop: form.crop,
       variety: form.crop === "Paddy" ? (form.variety || "Common") : null,
@@ -291,7 +304,8 @@ export default function Register({ farmerUser }) {
           slotDate: todayStr,
           slotTime: selectedSlotTime,
         });
-        navigate(`/status?id=${res.farmer.id}&new=1`);
+        const fidParam = res.farmer?.farmerId ? `&fid=${encodeURIComponent(res.farmer.farmerId)}` : "";
+        navigate(`/status?id=${res.farmer.id}&new=1${fidParam}`);
       } else {
         // Slotted Advance Booking
         const { farmer } = await api.registerFarmer({
@@ -300,7 +314,8 @@ export default function Register({ farmerUser }) {
           slotDate: form.slotDate || todayStr,
           slotTime: selectedSlotTime,
         });
-        navigate(`/status?id=${farmer.id}&new=1`);
+        const fidParam = farmer?.farmerId ? `&fid=${encodeURIComponent(farmer.farmerId)}` : "";
+        navigate(`/status?id=${farmer.id}&new=1${fidParam}`);
       }
     } catch (err) {
       setError(err.message || t("slot_full_error"));
@@ -498,12 +513,26 @@ export default function Register({ farmerUser }) {
               <input
                 id="phone"
                 type="tel"
-                maxLength={10}
+                maxLength={15}
                 required={!farmerUser?.email}
-                placeholder={farmerUser?.email ? `Signed in as ${farmerUser.email}` : "10-digit mobile number"}
+                placeholder={farmerUser?.email ? "e.g. 9876543210 (Optional)" : (t("signup_phone_placeholder") || "e.g. 9876543210")}
                 value={form.phone}
                 onChange={handlePhoneChange}
+                style={getImmediatePhoneFeedback(form.phone, t("err_phone_invalid")).error ? { borderColor: "var(--danger, #dc3545)" } : {}}
               />
+              {getImmediatePhoneFeedback(form.phone, t("err_phone_invalid")).error && (
+                <span
+                  style={{
+                    fontSize: 12,
+                    color: "var(--danger, #dc3545)",
+                    display: "block",
+                    marginTop: 4,
+                    fontWeight: 600,
+                  }}
+                >
+                  ⚠️ {getImmediatePhoneFeedback(form.phone, t("err_phone_invalid")).error}
+                </span>
+              )}
               {farmerUser?.email && !form.phone && (
                 <div style={{ fontSize: 11, color: "#8A8368", marginTop: 4 }}>
                   ✉️ Token notifications will be linked to your Google account: <strong>{farmerUser.email}</strong>
@@ -708,30 +737,35 @@ export default function Register({ farmerUser }) {
                 const selected = centres.find((c) => c.id === form.centreId);
                 if (!selected) return null;
                 return (
-                  <div
-                    style={{
-                      marginTop: 8,
-                      padding: "8px 12px",
-                      background: "rgba(35, 41, 31, 0.04)",
-                      border: "1px solid var(--line)",
-                      borderRadius: 4,
-                      fontSize: 13,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      flexWrap: "wrap",
-                      gap: 6,
-                    }}
-                  >
-                    <span style={{ color: "#4A4636" }}>
-                      💡 <strong>{t("best_time_label")}:</strong>{" "}
-                      {selected.bestTimeToVisit || t("best_time_no_data")}
-                    </span>
-                    <span className={`status-pill crowd-${selected.crowdStatus || "low"}`}>
-                      {selected.crowdStatus === "high" ? "🔴" : selected.crowdStatus === "medium" ? "🟡" : "🟢"}{" "}
-                      {t(`crowd_${selected.crowdStatus || "low"}`)}
-                    </span>
-                  </div>
+                  <>
+                    <div
+                      style={{
+                        marginTop: 8,
+                        padding: "8px 12px",
+                        background: "rgba(35, 41, 31, 0.04)",
+                        border: "1px solid var(--line)",
+                        borderRadius: 4,
+                        fontSize: 13,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        flexWrap: "wrap",
+                        gap: 6,
+                      }}
+                    >
+                      <span style={{ color: "#4A4636" }}>
+                        💡 <strong>{t("best_time_label")}:</strong>{" "}
+                        {selected.bestTimeToVisit || t("best_time_no_data")}
+                      </span>
+                      <span className={`status-pill crowd-${selected.crowdStatus || "low"}`}>
+                        {selected.crowdStatus === "high" ? "🔴" : selected.crowdStatus === "medium" ? "🟡" : "🟢"}{" "}
+                        {t(`crowd_${selected.crowdStatus || "low"}`)}
+                      </span>
+                    </div>
+
+                    {/* Visual Procurement Centre Location Map */}
+                    <CentreLocationMap centre={selected} userCoords={userCoords} />
+                  </>
                 );
               })()}
             </div>

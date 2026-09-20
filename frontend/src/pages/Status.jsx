@@ -13,6 +13,18 @@ const STAGES = [
   { key: "paid", labelKey: "stage_paid" },
 ];
 
+function formatReceiptDateTime(timestamp) {
+  if (!timestamp) return "";
+  const d = new Date(timestamp);
+  if (isNaN(d.getTime())) return String(timestamp);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const hours = String(d.getHours()).padStart(2, "0");
+  const mins = String(d.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${mins}`;
+}
+
 export default function Status({ farmerUser, onAddNotification }) {
   const { lang, t, tCrop, tDistrict, tCentre } = useLanguage();
   const todayStr = new Date().toISOString().split("T")[0];
@@ -68,6 +80,7 @@ export default function Status({ farmerUser, onAddNotification }) {
   const prevDataRef = useRef({});
   const autoCheckInAttemptedRef = useRef({});
   const notifiedCancellationRef = useRef(new Set());
+  const notifiedQueuePosRef = useRef(new Set());
 
   const speakAlert = useCallback(
     (text) => {
@@ -76,15 +89,51 @@ export default function Status({ farmerUser, onAddNotification }) {
       }
       try {
         window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(text);
-        const targetLocale = lang === "ta" ? "ta-IN" : "en-IN";
-        utterance.lang = targetLocale;
-        const voices = window.speechSynthesis.getVoices();
-        const matchVoice =
-          voices.find((v) => v.lang === targetLocale) ||
-          voices.find((v) => v.lang.startsWith(lang === "ta" ? "ta" : "en"));
-        if (matchVoice) utterance.voice = matchVoice;
-        window.speechSynthesis.speak(utterance);
+        const cleanText = text ? text.replace(/[*#`_•]/g, " ").replace(/\s+/g, " ").trim() : "";
+        if (!cleanText) return;
+
+        const voices = window.speechSynthesis.getVoices() || [];
+        const isTamilText = /[\u0B80-\u0BFF]/.test(cleanText);
+        const isTamil = lang === "ta" || isTamilText;
+
+        if (isTamil) {
+          const matchTamilVoice =
+            voices.find((v) => v.lang && /^ta[-_]IN$/i.test(v.lang)) ||
+            voices.find((v) => v.lang && /^ta[-_]/i.test(v.lang)) ||
+            voices.find((v) => v.lang && /^ta$/i.test(v.lang)) ||
+            voices.find((v) => /tamil/i.test(v.name) || /தமிழ்/i.test(v.name) || /tamil/i.test(v.lang));
+
+          const utterance = new SpeechSynthesisUtterance(cleanText);
+          utterance.text = cleanText;
+          utterance.lang = "ta-IN";
+          utterance.rate = 0.92;
+          utterance.pitch = 1.0;
+
+          if (matchTamilVoice) {
+            utterance.voice = matchTamilVoice;
+            console.log("[Status Queue Audio] Using matched Tamil voice:", matchTamilVoice.name);
+          } else {
+            console.warn("[Status Queue Audio] No dedicated Tamil voice pack. Synthesizing with utterance.lang = 'ta-IN'.");
+          }
+
+          window.speechSynthesis.resume();
+          window.speechSynthesis.speak(utterance);
+        } else {
+          const utterance = new SpeechSynthesisUtterance(cleanText);
+          utterance.text = cleanText;
+          utterance.lang = "en-IN";
+          utterance.rate = 1.0;
+          const matchEnglishVoice =
+            voices.find((v) => v.lang && /^en[-_]IN$/i.test(v.lang)) ||
+            voices.find((v) => v.lang && /^en[-_]/i.test(v.lang)) ||
+            voices.find((v) => v.lang && /^en$/i.test(v.lang)) ||
+            voices.find((v) => /india/i.test(v.name) || /heera/i.test(v.name) || /ravi/i.test(v.name));
+          if (matchEnglishVoice) {
+            utterance.voice = matchEnglishVoice;
+          }
+          window.speechSynthesis.resume();
+          window.speechSynthesis.speak(utterance);
+        }
       } catch {
         // Ignore audio errors
       }
@@ -134,51 +183,29 @@ export default function Status({ farmerUser, onAddNotification }) {
         const newStatus = result.farmer?.status;
         const waitMin = result.estimatedWaitMinutes;
 
-        if (prev) {
+        // Milestone condition 1: Status changed
+        if (prev && newStatus && newStatus !== prev.status) {
           let alertMsg = "";
-
-          // Milestone condition 1: Status changed
-          if (newStatus && newStatus !== prev.status) {
-            if (newStatus === "quality_check") {
-              alertMsg = t("notify_status_quality_check_msg");
-            } else if (newStatus === "procured") {
-              const f = result.farmer;
-              const hasDiff = f?.declaredQuantityKg !== undefined && f?.verifiedQuantityKg !== undefined && Math.abs(f.declaredQuantityKg - f.verifiedQuantityKg) > 0.01;
-              if (hasDiff) {
-                const reasonText = f.quantityDiscrepancyReason ? ` Reason: ${f.quantityDiscrepancyReason}.` : "";
-                alertMsg = `Your produce has been verified at ${f.verifiedQuantity} ${f.verifiedUnit || "bags"} (booked: ${f.declaredQuantity || f.quantityKg} ${f.declaredUnit || "bags"}).${reasonText} Final payment will be calculated on the verified amount.`;
-              } else {
-                alertMsg = `Your produce has been procured - ${f?.verifiedQuantity || f?.declaredQuantity || f?.quantityKg} ${f?.verifiedUnit || f?.declaredUnit || "bags"} verified, matching your booking.`;
-              }
-            } else if (newStatus === "payment_initiated") {
-              alertMsg = t("notify_status_payment_initiated_msg");
-            } else if (newStatus === "paid") {
-              alertMsg = t("notify_status_paid_msg");
-            } else if (newStatus === "cancelled" && !result.farmer?.cancellationReason) {
-              alertMsg = t("notify_status_cancelled_msg");
-            }
-          }
-          // Milestone condition 2: Position moved forward (decreased)
-          else if (
-            newPos !== null &&
-            newPos !== undefined &&
-            prev.position !== null &&
-            prev.position !== undefined &&
-            newPos < prev.position
-          ) {
-            if (newPos === 1) {
-              alertMsg = t("notify_pos_1_msg");
-            } else if (newPos === 3) {
-              alertMsg = t("notify_pos_3_msg");
+          if (newStatus === "quality_check") {
+            alertMsg = t("notify_status_quality_check_msg");
+          } else if (newStatus === "procured") {
+            const f = result.farmer;
+            const hasDiff = f?.declaredQuantityKg !== undefined && f?.verifiedQuantityKg !== undefined && Math.abs(f.declaredQuantityKg - f.verifiedQuantityKg) > 0.01;
+            if (hasDiff) {
+              const reasonText = f.quantityDiscrepancyReason ? ` Reason: ${f.quantityDiscrepancyReason}.` : "";
+              alertMsg = `Your produce has been verified at ${f.verifiedQuantity} ${f.verifiedUnit || "bags"} (booked: ${f.declaredQuantity || f.quantityKg} ${f.declaredUnit || "bags"}).${reasonText} Final payment will be calculated on the verified amount.`;
             } else {
-              alertMsg = t("notify_pos_advance_msg")
-                .replace("{pos}", newPos)
-                .replace("{wait}", waitMin);
+              alertMsg = `Your produce has been procured - ${f?.verifiedQuantity || f?.declaredQuantity || f?.quantityKg} ${f?.verifiedUnit || f?.declaredUnit || "bags"} verified, matching your booking.`;
             }
+          } else if (newStatus === "payment_initiated") {
+            alertMsg = t("notify_status_payment_initiated_msg");
+          } else if (newStatus === "paid") {
+            alertMsg = t("notify_status_paid_msg");
+          } else if (newStatus === "cancelled" && !result.farmer?.cancellationReason) {
+            alertMsg = t("notify_status_cancelled_msg");
           }
 
           if (alertMsg) {
-            // Push persistent notification to topbar bell
             if (onAddNotification) {
               onAddNotification({
                 tokenId: id,
@@ -186,9 +213,89 @@ export default function Status({ farmerUser, onAddNotification }) {
                 message: alertMsg,
               });
             }
-            // Speak alert aloud if voice is enabled
             speakAlert(alertMsg);
           }
+        }
+
+        // Milestone condition 2: Strict Queue Position Notifications (ONLY Position 5 and Position 1)
+        const isQueueActive = newStatus !== "cancelled" && newStatus !== "paid";
+        if (isQueueActive && newPos !== null && newPos !== undefined) {
+          // Rule 1: Position exactly 5
+          if (newPos === 5) {
+            const key5 = `yieldo_qnotif_${id}_5`;
+            const alreadyNotified5 =
+              notifiedQueuePosRef.current.has(key5) ||
+              (() => {
+                try {
+                  return localStorage.getItem(key5) === "1" || sessionStorage.getItem(key5) === "1";
+                } catch {
+                  return false;
+                }
+              })();
+
+            if (!alreadyNotified5) {
+              notifiedQueuePosRef.current.add(key5);
+              try {
+                localStorage.setItem(key5, "1");
+                sessionStorage.setItem(key5, "1");
+              } catch {}
+
+              const f = result.farmer;
+              const slotTiming = f?.slotTime || "11:00 AM to 12:00 PM";
+              const pos5Msg = (t("notify_pos_5_msg") || "Reach your procurement centre. You are in 5th position of the queue. Your slot timing is {slot}.").replace("{slot}", slotTiming);
+              const pos5Title = t("notify_pos_5_title") || "Reach Procurement Centre";
+
+              if (onAddNotification) {
+                onAddNotification({
+                  id: `NOTIF-QUEUE-5-${id}`,
+                  tokenId: id,
+                  farmerName: f?.name,
+                  crop: f?.crop,
+                  title: pos5Title,
+                  message: pos5Msg,
+                });
+              }
+              speakAlert(pos5Msg);
+            }
+          }
+          // Rule 2: Position exactly 1
+          else if (newPos === 1) {
+            const key1 = `yieldo_qnotif_${id}_1`;
+            const alreadyNotified1 =
+              notifiedQueuePosRef.current.has(key1) ||
+              (() => {
+                try {
+                  return localStorage.getItem(key1) === "1" || sessionStorage.getItem(key1) === "1";
+                } catch {
+                  return false;
+                }
+              })();
+
+            if (!alreadyNotified1) {
+              notifiedQueuePosRef.current.add(key1);
+              try {
+                localStorage.setItem(key1, "1");
+                sessionStorage.setItem(key1, "1");
+              } catch {}
+
+              const f = result.farmer;
+              const pos1Msg = t("notify_pos_1_msg") || "You are next in line. Please be ready for procurement.";
+              const pos1Title = t("notify_pos_1_title") || "Your Turn Next";
+
+              if (onAddNotification) {
+                onAddNotification({
+                  id: `NOTIF-QUEUE-1-${id}`,
+                  tokenId: id,
+                  farmerName: f?.name,
+                  crop: f?.crop,
+                  title: pos1Title,
+                  message: pos1Msg,
+                });
+              }
+              speakAlert(pos1Msg);
+            }
+          }
+          // Positions 4, 3, 2 deliberately have no notification logic (silent transitions)
         }
 
         // Store latest snapshot for this token
@@ -957,6 +1064,21 @@ export default function Status({ farmerUser, onAddNotification }) {
                       <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 15 }}>
                         {tItem.id}
                       </span>
+                      {tItem.farmerId && (
+                        <span
+                          style={{
+                            fontFamily: "var(--font-mono)",
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: "var(--field)",
+                            background: "rgba(31, 61, 43, 0.08)",
+                            borderRadius: 4,
+                            padding: "1px 6px",
+                          }}
+                        >
+                          {tItem.farmerId}
+                        </span>
+                      )}
                       <span style={{ fontWeight: 600, fontSize: 14 }}>
                         {tCrop(tItem.crop)} {tItem.variety ? `(${tItem.variety})` : ""}
                       </span>
@@ -997,12 +1119,58 @@ export default function Status({ farmerUser, onAddNotification }) {
         </div>
       )}
 
+      {/* Registration Success Banner */}
+      {params.get("new") === "1" && (data?.farmer?.farmerId || params.get("fid")) && (
+        <div
+          className="registration-success-banner"
+          style={{
+            background: "linear-gradient(135deg, rgba(31, 61, 43, 0.12) 0%, rgba(31, 61, 43, 0.04) 100%)",
+            border: "2px solid var(--field)",
+            borderRadius: 8,
+            padding: "16px 20px",
+            marginBottom: 20,
+            textAlign: "center",
+            boxShadow: "0 4px 16px rgba(31, 61, 43, 0.12)",
+          }}
+        >
+          <div style={{ fontSize: 26, marginBottom: 4 }}>🎉</div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: "var(--field)", marginBottom: 4 }}>
+            {lang === "ta"
+              ? `பதிவு வெற்றிகரமாக முடிந்தது - விவசாயி ஐடி: ${data?.farmer?.farmerId || params.get("fid")}`
+              : `Registration Successful - Farmer ID: ${data?.farmer?.farmerId || params.get("fid")}`}
+          </div>
+          <div style={{ fontSize: 13, color: "var(--ink)" }}>
+            Token: <strong>{data?.farmer?.id || selectedTokenId}</strong> · {t("status_inspect_hint")}
+          </div>
+        </div>
+      )}
+
       {error && <div className="error-text" style={{ marginBottom: 16 }}>{error}</div>}
 
       {data && (
         <>
           <div className="token-stub" style={{ marginTop: 10 }}>
             <div className="token-id">{data.farmer.id}</div>
+            {data.farmer.farmerId && (
+              <div
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 13,
+                  fontWeight: 800,
+                  color: "var(--field)",
+                  background: "rgba(31, 61, 43, 0.08)",
+                  border: "1px solid rgba(31, 61, 43, 0.2)",
+                  borderRadius: 20,
+                  padding: "3px 12px",
+                  display: "inline-block",
+                  marginTop: 4,
+                  marginBottom: 6,
+                  letterSpacing: 0.5,
+                }}
+              >
+                Farmer ID: {data.farmer.farmerId}
+              </div>
+            )}
             <div className="token-meta">
               {data.farmer.name} · {tCrop(data.farmer.crop)} {data.farmer.variety ? `(${data.farmer.variety})` : ""} ·{" "}
               {data.farmer.verifiedQuantity !== null && data.farmer.verifiedQuantity !== undefined
@@ -1365,13 +1533,13 @@ export default function Status({ farmerUser, onAddNotification }) {
                             </span>
                           </div>
 
-                          {(receipt.discrepancyReason || data.farmer.quantityDiscrepancyReason) && (
+                          {(receipt.adjustmentReason || data.farmer.adjustmentReason || receipt.discrepancyReason || data.farmer.quantityDiscrepancyReason) && (
                             <div className="receipt-item" style={{ gridColumn: "1 / -1", background: "rgba(201, 138, 43, 0.08)", padding: "8px 12px", borderRadius: 6, border: "1px solid rgba(201, 138, 43, 0.25)" }}>
                               <span className="receipt-item-label" style={{ color: "#B45309", fontWeight: 700 }}>
-                                ℹ️ {t("receipt_discrepancy_reason_label") || "Discrepancy Note / Reason"}
+                                ℹ️ Note: Verified quantity adjusted from Declared Quantity — Reason:
                               </span>
                               <span className="receipt-item-val" style={{ color: "#78350F", fontWeight: 600 }}>
-                                "{receipt.discrepancyReason || data.farmer.quantityDiscrepancyReason}"
+                                {receipt.adjustmentReason || data.farmer.adjustmentReason || receipt.discrepancyReason || data.farmer.quantityDiscrepancyReason}
                               </span>
                             </div>
                           )}
@@ -1421,6 +1589,22 @@ export default function Status({ farmerUser, onAddNotification }) {
                     <div className="receipt-footer-badge">
                       <span>🏛️</span>
                       <span>{t("receipt_gov_verified")}</span>
+                    </div>
+
+                    <div
+                      className="receipt-process-completed"
+                      style={{
+                        marginTop: 12,
+                        paddingTop: 10,
+                        borderTop: "1px dashed rgba(0, 0, 0, 0.15)",
+                        fontSize: 12,
+                        color: "#6A6553",
+                        textAlign: "center",
+                        fontFamily: "var(--font-mono)",
+                        fontWeight: 600,
+                      }}
+                    >
+                      Process Completed: {formatReceiptDateTime(receipt.releasedAt || receipt.processCompletedAt || data.farmer.procuredAt || data.farmer.stageChangedAt)}
                     </div>
 
                     <div className="no-print" style={{ marginTop: 18, textAlign: "center" }}>
@@ -1602,13 +1786,13 @@ export default function Status({ farmerUser, onAddNotification }) {
                     <span className="receipt-item-label">{t("receipt_centre_label")}</span>
                     <span className="receipt-item-val">{tCentre(rec.centreName || rec.centreId)}</span>
                   </div>
-                  {receipt.discrepancyReason && (
+                  {(receipt.adjustmentReason || rec.adjustmentReason || receipt.discrepancyReason) && (
                     <div className="receipt-item" style={{ gridColumn: "1 / -1", background: "rgba(201, 138, 43, 0.08)", padding: "8px 10px", borderRadius: 6 }}>
                       <span className="receipt-item-label" style={{ color: "#B45309", fontWeight: 700 }}>
-                        {t("receipt_discrepancy_reason_label")}:
+                        Note: Verified quantity adjusted from Declared Quantity — Reason:
                       </span>
                       <span className="receipt-item-val" style={{ color: "#78350F" }}>
-                        "{receipt.discrepancyReason}"
+                        {receipt.adjustmentReason || rec.adjustmentReason || receipt.discrepancyReason}
                       </span>
                     </div>
                   )}
@@ -1631,6 +1815,22 @@ export default function Status({ farmerUser, onAddNotification }) {
                 <div className="receipt-footer-badge">
                   <span>🏛️</span>
                   <span>{t("receipt_gov_verified")}</span>
+                </div>
+
+                <div
+                  className="receipt-process-completed"
+                  style={{
+                    marginTop: 12,
+                    paddingTop: 10,
+                    borderTop: "1px dashed rgba(0, 0, 0, 0.15)",
+                    fontSize: 12,
+                    color: "#6A6553",
+                    textAlign: "center",
+                    fontFamily: "var(--font-mono)",
+                    fontWeight: 600,
+                  }}
+                >
+                  Process Completed: {formatReceiptDateTime(receipt.releasedAt || receipt.processCompletedAt || rec.paymentTimestamp)}
                 </div>
               </div>
 

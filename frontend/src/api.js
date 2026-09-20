@@ -3,12 +3,25 @@ const BASE = "/api";
 async function handle(res) {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `Request failed (${res.status})`);
+    const err = new Error(body.error || `Request failed (${res.status})`);
+    err.status = res.status;
+    err.data = body;
+    err.notRegistered = Boolean(body.notRegistered);
+    err.code = body.code;
+    err.existingFarmerId = body.existingFarmerId;
+    throw err;
   }
   return res.json();
 }
 
 export const api = {
+  registerFarmerAccount: (payload) =>
+    fetch(`${BASE}/farmers/register-account`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).then(handle),
+
   loginFarmer: (payload) =>
     fetch(`${BASE}/farmers/login`, {
       method: "POST",
@@ -109,12 +122,41 @@ export const api = {
 
   getAdminOverview: () => fetch(`${BASE}/admin/overview`).then(handle),
 
+  verifyAdminIdentity: (payload) =>
+    fetch(`${BASE}/admin/verify-identity`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).then(handle),
+
   loginAdmin: (payload) =>
     fetch(`${BASE}/admin/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }).then(handle),
+
+  registerAdminAccount: (payload) =>
+    fetch(`${BASE}/admin/register-account`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).then(handle),
+
+  getAdminProfile: (token) => {
+    const headers = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    return fetch(`${BASE}/admin/profile`, { headers }).then(handle);
+  },
+
+  logoutAdmin: (token) => {
+    const headers = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    return fetch(`${BASE}/admin/logout`, { method: "POST", headers }).then(handle);
+  },
+
+  getAdminRecord: (adminId) =>
+    fetch(`${BASE}/admin/record/${encodeURIComponent(adminId)}`).then(handle),
 
   advanceFarmer: (id, statusOrPayload, extra = {}) => {
     const payload = typeof statusOrPayload === "string" ? { status: statusOrPayload, ...extra } : statusOrPayload;
@@ -125,12 +167,28 @@ export const api = {
     }).then(handle);
   },
 
-  releaseFarmerReceipt: (id, payload = {}) =>
-    fetch(`${BASE}/admin/farmers/${id}/release-receipt`, {
+  releaseFarmerReceipt: (id, payload = {}, token = null) => {
+    const headers = { "Content-Type": "application/json" };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    return fetch(`${BASE}/admin/farmers/${id}/release-receipt`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(payload),
-    }).then(handle),
+    }).then(handle);
+  },
+
+  getAdminProcurementsHandled: (token = null, search = "") => {
+    const headers = { "Content-Type": "application/json" };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    const query = search ? `?search=${encodeURIComponent(search)}` : "";
+    return fetch(`${BASE}/admin/procurements-handled${query}`, {
+      headers,
+    }).then(handle);
+  },
 
   cancelAdminFarmerWithReason: (id, reason) =>
     fetch(`${BASE}/admin/farmers/${id}/cancel-with-reason`, {
@@ -139,11 +197,11 @@ export const api = {
       body: JSON.stringify({ reason }),
     }).then(handle),
 
-  sendChatbotMessage: ({ message, language, history }) =>
+  sendChatbotMessage: ({ message, language, history, farmerIdentifier, farmerName }) =>
     fetch(`${BASE}/chatbot/message`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, language, history }),
+      body: JSON.stringify({ message, language, history, farmerIdentifier, farmerName }),
     }).then(handle),
 
   sendAdminChatbotMessage: ({ message, language, history }) =>

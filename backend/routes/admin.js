@@ -108,12 +108,31 @@ router.patch("/admin/farmers/:id/advance", (req, res) => {
   }
 });
 
-// PATCH /api/admin/farmers/:id/release-receipt { adminName }
+// PATCH /api/admin/farmers/:id/release-receipt { adminName, adminId, adjustmentReason }
 router.patch("/admin/farmers/:id/release-receipt", (req, res) => {
   const { id } = req.params;
-  const { adminName } = req.body || {};
+  const { adminName, adminId, adminToken, adjustmentReason } = req.body || {};
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith("Bearer ")
+    ? authHeader.substring(7)
+    : (adminToken || req.headers["x-admin-token"] || req.query.token);
 
-  const result = store.releaseFarmerReceipt(id, { adminName });
+  let targetAdminId = adminId;
+  let targetAdminName = adminName;
+  if (token) {
+    const authedAdmin = store.getAuthenticatedAdmin(token);
+    if (authedAdmin) {
+      if (!targetAdminId) targetAdminId = authedAdmin.adminId;
+      if (!targetAdminName) targetAdminName = authedAdmin.name;
+    }
+  }
+
+  const result = store.releaseFarmerReceipt(id, {
+    adminName: targetAdminName,
+    adminId: targetAdminId,
+    adminToken: token,
+    adjustmentReason,
+  });
   if (result.error) {
     return res.status(result.status || 400).json({ error: result.error });
   }
@@ -122,10 +141,13 @@ router.patch("/admin/farmers/:id/release-receipt", (req, res) => {
   if (result.farmer && result.farmer.phone) {
     const totalAmount = result.receipt?.totalAmount || 0;
     const formattedAmount = totalAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 });
-    sendSMS(
-      result.farmer.phone,
-      `Hi ${result.farmer.name}, your payment receipt for token ${result.farmer.id} has been released. Total amount: ₹${formattedAmount}. View and download on Yieldo.`
-    );
+    let smsText = `Hi ${result.farmer.name}, your payment receipt for token ${result.farmer.id} has been released. Total amount: ₹${formattedAmount}. View and download on Yieldo.`;
+    const finalKg = Number(result.receipt?.quantityKg || result.receipt?.verifiedQuantityKg || 0);
+    const declaredKg = Number(result.farmer.declaredQuantityKg ?? result.farmer.quantityKg ?? finalKg);
+    if (Math.abs(finalKg - declaredKg) > 0.01 && result.receipt?.adjustmentReason) {
+      smsText += ` Note: Verified quantity adjusted from Declared Quantity — Reason: ${result.receipt.adjustmentReason}`;
+    }
+    sendSMS(result.farmer.phone, smsText);
   }
 
   res.json({
@@ -331,5 +353,170 @@ router.get("/admin/analytics-summary", (req, res) => {
   }
 });
 
+// POST /api/admin/urgent-swap { farmerTokenId1, farmerTokenId2, reason }
+router.post("/admin/urgent-swap", (req, res) => {
+  const { farmerTokenId1, farmerTokenId2, reason } = req.body || {};
+
+  if (!farmerTokenId1 || !farmerTokenId2) {
+    return res.status(400).json({ error: "Both farmerTokenId1 and farmerTokenId2 are required" });
+  }
+
+  if (!reason || typeof reason !== "string" || !reason.trim()) {
+    return res.status(400).json({ error: "A valid reason is required for urgent slot swapping" });
+  }
+
+  const result = store.createAdminUrgentSwap({
+    farmerTokenId1,
+    farmerTokenId2,
+    reason: reason.trim(),
+  });
+
+  if (!result.success) {
+    return res.status(result.status || 400).json({ error: result.error });
+  }
+
+  res.json(result);
+});
+
+// GET /api/admin/swap-requests?centreId=...
+router.get("/admin/swap-requests", (req, res) => {
+  const { centreId } = req.query;
+  const list = store.getSwapRequestsForCentre(centreId);
+  res.json(list);
+});
+
+// POST /api/admin/register-account (Centre Admin Details Collection & Registration)
+router.post("/admin/register-account", (req, res) => {
+  try {
+    const { password, confirmPassword } = req.body || {};
+    if (!password || typeof password !== "string" || !password.trim()) {
+      return res.status(400).json({ error: "Create Password is required." });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters." });
+    }
+    if (!confirmPassword || typeof confirmPassword !== "string" || !confirmPassword.trim()) {
+      return res.status(400).json({ error: "Confirm Password is required." });
+    }
+    if (confirmPassword !== password) {
+      return res.status(400).json({ error: "Confirm Password does not match." });
+    }
+    const admin = store.registerAdminAccount(req.body);
+    const { password: _p, passwordHash: _ph, ...safeAdmin } = admin;
+    res.status(201).json({
+      success: true,
+      message: "Centre Admin registered successfully",
+      admin: safeAdmin,
+    });
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/register
+router.post("/admin/register", (req, res) => {
+  try {
+    const { password, confirmPassword } = req.body || {};
+    if (!password || typeof password !== "string" || !password.trim()) {
+      return res.status(400).json({ error: "Create Password is required." });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters." });
+    }
+    if (!confirmPassword || typeof confirmPassword !== "string" || !confirmPassword.trim()) {
+      return res.status(400).json({ error: "Confirm Password is required." });
+    }
+    if (confirmPassword !== password) {
+      return res.status(400).json({ error: "Confirm Password does not match." });
+    }
+    const admin = store.registerAdminAccount(req.body);
+    const { password: _p, passwordHash: _ph, ...safeAdmin } = admin;
+    res.status(201).json({
+      success: true,
+      message: "Centre Admin registered successfully",
+      admin: safeAdmin,
+    });
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/profile (Retrieve authenticated admin profile)
+router.get("/admin/profile", (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith("Bearer ")
+    ? authHeader.substring(7)
+    : req.query.token || req.headers["x-admin-token"];
+  const admin = store.getAuthenticatedAdmin(token);
+  if (!admin) {
+    return res.status(404).json({ error: "Admin profile not found" });
+  }
+  const { password: _p, passwordHash: _ph, ...safeAdmin } = admin;
+  const procurementsHandled = Array.isArray(admin.procurementsHandled)
+    ? admin.procurementsHandled
+    : (admin.adminId ? store.getAdminProcurements(admin.adminId) : []);
+  safeAdmin.procurementsHandled = procurementsHandled;
+  safeAdmin.procurementsHandledCount = procurementsHandled.length;
+  res.json({ success: true, admin: safeAdmin });
+});
+
+// GET /api/admin/record/:adminId
+router.get("/admin/record/:adminId", (req, res) => {
+  const admin = store.findRegisteredAdmin({ adminId: req.params.adminId });
+  if (!admin) {
+    return res.status(404).json({ error: "Admin record not found" });
+  }
+  const { password: _p, passwordHash: _ph, ...safeAdmin } = admin;
+  const procurementsHandled = Array.isArray(admin.procurementsHandled)
+    ? admin.procurementsHandled
+    : store.getAdminProcurements(admin.adminId);
+  safeAdmin.procurementsHandled = procurementsHandled;
+  safeAdmin.procurementsHandledCount = procurementsHandled.length;
+  res.json({ success: true, admin: safeAdmin });
+});
+
+// GET /api/admin/procurements-handled (Retrieve activity records for authenticated admin or adminId)
+router.get("/admin/procurements-handled", (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith("Bearer ")
+    ? authHeader.substring(7)
+    : req.query.token || req.headers["x-admin-token"];
+
+  let targetAdmin = null;
+  if (token) {
+    targetAdmin = store.getAuthenticatedAdmin(token);
+  }
+  if (!targetAdmin && req.query.adminId) {
+    targetAdmin = store.findRegisteredAdmin({ adminId: req.query.adminId });
+  }
+
+  if (!targetAdmin) {
+    return res.status(404).json({ error: "Admin not found or unauthorized" });
+  }
+
+  const allRecords = Array.isArray(targetAdmin.procurementsHandled)
+    ? targetAdmin.procurementsHandled
+    : store.getAdminProcurements(targetAdmin.adminId);
+
+  const search = req.query.search ? String(req.query.search).trim().toLowerCase() : "";
+  const filtered = search
+    ? allRecords.filter((r) => {
+        const fid = (r.farmerId || "").toLowerCase();
+        const tid = (r.tokenId || "").toLowerCase();
+        return fid.includes(search) || tid.includes(search);
+      })
+    : allRecords;
+
+  res.json({
+    success: true,
+    adminId: targetAdmin.adminId,
+    adminName: targetAdmin.name,
+    count: allRecords.length,
+    filteredCount: filtered.length,
+    records: filtered,
+  });
+});
+
 export default router;
+
 
