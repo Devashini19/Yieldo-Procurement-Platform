@@ -207,7 +207,7 @@ export default function FarmerLogin({ onLogin }) {
               color: "var(--paper)",
             }}
           >
-            KRISHI QUEUE SYSTEM
+            YIELDO PROCUREMENT PLATFORM
           </span>
         </div>
 

@@ -58,9 +58,10 @@ export default function ChatWidget({ farmerUser }) {
             `[SpeechSynthesis] Loaded ${available.length} voices on device:`,
             available.map((v) => `${v.name} [${v.lang}]${v.default ? " (default)" : ""}`)
           );
-          const tamilVoice = available.find(
-            (v) => (v.lang && /^ta/i.test(v.lang)) || /tamil/i.test(v.name) || /தமிழ்/i.test(v.name)
-          );
+          const tamilVoice =
+            available.find((v) => v.lang && v.lang.toLowerCase() === "ta-in") ||
+            available.find((v) => v.lang && v.lang.toLowerCase().startsWith("ta")) ||
+            null;
           if (tamilVoice) {
             console.log("[SpeechSynthesis] Dedicated Tamil voice found:", tamilVoice.name, `[${tamilVoice.lang}]`);
           } else {
@@ -98,11 +99,59 @@ export default function ChatWidget({ farmerUser }) {
         return;
       }
 
-      const getVoicesList = () => {
-        const direct = window.speechSynthesis.getVoices();
-        if (direct && direct.length > 0) return direct;
-        if (voices && voices.length > 0) return voices;
-        return [];
+      // Safe voice loading helper respecting browser async voice readiness
+      const getVoicesSafely = (onDone) => {
+        // 1. Call speechSynthesis.getVoices()
+        const direct = window.speechSynthesis.getVoices() || [];
+        if (direct.length > 0) {
+          setVoices(direct);
+          onDone(direct);
+          return;
+        }
+
+        // 2. If array is empty, listen for onvoiceschanged / voiceschanged
+        let resolved = false;
+        let retryTimer = null;
+
+        const cleanup = () => {
+          window.speechSynthesis.removeEventListener("voiceschanged", onVoicesReady);
+          if (window.speechSynthesis.onvoiceschanged === onVoicesReady) {
+            window.speechSynthesis.onvoiceschanged = null;
+          }
+          if (retryTimer) {
+            clearTimeout(retryTimer);
+            retryTimer = null;
+          }
+        };
+
+        const onVoicesReady = () => {
+          if (resolved) return;
+          resolved = true;
+          cleanup();
+          // 3. After voices become available, call getVoices() again
+          const loaded = window.speechSynthesis.getVoices() || [];
+          if (loaded.length > 0) {
+            setVoices(loaded);
+          }
+          onDone(loaded);
+        };
+
+        // 4. Avoid registering duplicate voiceschanged listeners every time the user speaks
+        window.speechSynthesis.addEventListener("voiceschanged", onVoicesReady, { once: true });
+        window.speechSynthesis.onvoiceschanged = onVoicesReady;
+
+        // 5. If getVoices() is still empty and voiceschanged does not fire, retry once after 1.5s (1–2 seconds)
+        retryTimer = setTimeout(() => {
+          if (resolved) return;
+          resolved = true;
+          cleanup();
+          const retried = window.speechSynthesis.getVoices() || [];
+          if (retried.length > 0) {
+            setVoices(retried);
+          }
+          // 6. Only after this retry should the system conclude that no browser voice is available
+          onDone(retried);
+        }, 1500);
       };
 
       const doSpeak = (availableVoices) => {
@@ -121,37 +170,31 @@ export default function ChatWidget({ farmerUser }) {
           const isTamilText = /[\u0B80-\u0BFF]/.test(cleanText);
           const isTamil = activeLang === "ta" || isTamilText;
 
-          // Always log available voices list (name + lang) as requested
-          console.log(
-            `[SpeechSynthesis] Available voices list (${availableVoices.length}):`,
-            availableVoices.map((v) => `${v.name} (${v.lang})`)
-          );
-          console.log(
-            `[SpeechSynthesis] doSpeak called -> activeLang: "${activeLang}", isTamilText: ${isTamilText}, final isTamil: ${isTamil}`
-          );
-
           if (isTamil) {
-            // Explicitly search for a Tamil voice (ta-IN or close variant)
+            // Priority 1: voice.lang === "ta-IN" (case-insensitive)
+            // Priority 2: otherwise a voice.lang starting with "ta"
             const matchTamilVoice =
-              availableVoices.find((v) => v.lang && /^ta[-_]IN$/i.test(v.lang)) ||
-              availableVoices.find((v) => v.lang && /^ta[-_]/i.test(v.lang)) ||
-              availableVoices.find((v) => v.lang && /^ta$/i.test(v.lang)) ||
-              availableVoices.find((v) => /tamil/i.test(v.name) || /தமிழ்/i.test(v.name) || /tamil/i.test(v.lang));
+              availableVoices.find((v) => v.lang && v.lang.toLowerCase() === "ta-in") ||
+              availableVoices.find((v) => v.lang && v.lang.toLowerCase().startsWith("ta")) ||
+              null;
 
+            // Required Tamil TTS Debug Logging
+            console.log("[Tamil TTS] text:", cleanText);
+            console.log("[Tamil TTS] utterance.lang:", "ta-IN");
+            console.log(
+              "[Tamil TTS] available voices:\n" +
+                (availableVoices.length > 0
+                  ? availableVoices.map((v) => `${v.name} - ${v.lang}`).join("\n")
+                  : "none")
+            );
+            console.log("[Tamil TTS] selected voice:", matchTamilVoice ? matchTamilVoice.name : "none");
+            console.log("[Tamil TTS] selected voice.lang:", matchTamilVoice ? matchTamilVoice.lang : "none");
+
+            // Graceful fallback: If no Tamil voice is available, skip audio gracefully without English voice fallback
             if (!matchTamilVoice) {
               console.warn(
-                "[SpeechSynthesis] Notice: No dedicated Tamil voice pack (ta-IN) installed on this browser/OS. " +
-                "Skipping audio playback for Tamil to prevent English voice mispronunciation. " +
-                "Tamil text response remains clearly visible in the chat."
+                "[Tamil TTS] No browser/OS Tamil voice detected. Skipping Tamil audio playback gracefully; text response displayed."
               );
-              console.log("[SpeechSynthesis Speak Debug - Tamil]", {
-                text: cleanText,
-                utteranceLang: "ta-IN",
-                voiceName: "none (Tamil voice not installed - skipped audio fallback)",
-                voiceLang: "none",
-                hasDedicatedVoice: false,
-                action: "graceful silent fallback (text only)",
-              });
               setIsSpeaking(false);
               return;
             }
@@ -162,30 +205,20 @@ export default function ChatWidget({ farmerUser }) {
             utterance.rate = 0.92;
             utterance.pitch = 1.0;
             utterance.voice = matchTamilVoice;
-            console.log("[SpeechSynthesis] Selected dedicated Tamil voice:", matchTamilVoice.name, `(${matchTamilVoice.lang})`);
 
             currentUtteranceRef.current = utterance;
 
             utterance.onstart = () => setIsSpeaking(true);
             utterance.onend = () => setIsSpeaking(false);
             utterance.onerror = (e) => {
-              console.warn("[SpeechSynthesis] Utterance error:", e);
+              console.warn("[Tamil TTS] Utterance error:", e);
               setIsSpeaking(false);
             };
-
-            console.log("[SpeechSynthesis Speak Debug - Tamil]", {
-              text: utterance.text,
-              utteranceLang: utterance.lang,
-              voiceName: utterance.voice.name,
-              voiceLang: utterance.voice.lang,
-              hasDedicatedVoice: true,
-              action: "speaking via Tamil voice",
-            });
 
             window.speechSynthesis.resume();
             window.speechSynthesis.speak(utterance);
           } else {
-            // English voice playback
+            // English voice playback (existing working English behavior kept unchanged)
             const utterance = new SpeechSynthesisUtterance(cleanText);
             utterance.text = cleanText;
             utterance.lang = "en-IN";
@@ -228,23 +261,9 @@ export default function ChatWidget({ farmerUser }) {
         }
       };
 
-      const currentVoices = getVoicesList();
-      if (currentVoices.length > 0) {
-        doSpeak(currentVoices);
-      } else {
-        // If voices not yet populated, wait for voiceschanged or brief timeout
-        let handled = false;
-        const onVoicesReady = () => {
-          if (handled) return;
-          handled = true;
-          const loaded = getVoicesList();
-          doSpeak(loaded);
-        };
-        window.speechSynthesis.addEventListener("voiceschanged", onVoicesReady, { once: true });
-        setTimeout(onVoicesReady, 250);
-      }
+      getVoicesSafely(doSpeak);
     },
-    [voiceReplyEnabled, lang, voices]
+    [voiceReplyEnabled, lang]
   );
 
   async function sendUserMessage(text) {
